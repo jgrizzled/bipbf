@@ -1,4 +1,4 @@
-package bipbf
+package naive
 
 import (
 	"sort"

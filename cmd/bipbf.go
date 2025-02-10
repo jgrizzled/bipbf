@@ -2,6 +2,7 @@ package main
 
 import (
 	"bipbf"
+	"bipbf/strats/naive"
 	"flag"
 	"fmt"
 	"log"
@@ -28,7 +29,7 @@ func main() {
 	flag.IntVar(&workersFlag, "workers", 0, "Number of worker goroutines (default is numCPU - 1)")
 
 	var batchSizeFlag int
-	flag.IntVar(&batchSizeFlag, "batchSize", 1000, "Number of passwords per batch")
+	flag.IntVar(&batchSizeFlag, "batchSize", 10000, "Number of passwords per batch")
 
 	var minLenFlag int
 	flag.IntVar(&minLenFlag, "minLen", 1, "Minimum length of passwords to brute force")
@@ -132,13 +133,19 @@ func main() {
 		log.Fatal("--addressType or BIPBF_ADDRESS_TYPE env var must be 'btc-nativesegwit' or 'eth'")
 	}
 
-	config := bipbf.BruteForceConfig{
+	// Initialize DB connection at the top level
+	db, err := bipbf.InitDB(dbPathFlag)
+	if err != nil {
+		log.Fatalf("Failed to initialize database: %v", err)
+	}
+	defer db.Close()
+
+	config := naive.BruteForceConfig{
 		Charset:     finalCharset,
 		Workers:     finalWorkers,
 		BatchSize:   batchSizeFlag,
 		MinLen:      minLenFlag,
 		MaxLen:      maxLenFlag,
-		DbPath:      dbPathFlag,
 		Mnemonic:    finalMnemonic,
 		Address:     finalAddress,
 		AddressType: finalAddressType,
@@ -150,7 +157,7 @@ func main() {
 	fmt.Printf("Batch size: %d\n", config.BatchSize)
 	fmt.Printf("minLen: %d, maxLen: %d\n", config.MinLen, config.MaxLen)
 
-	result, err := bipbf.NaiveBruteForce(config)
+	result, err := naive.NaiveBruteForce(db, config)
 	if err != nil {
 		log.Fatalf("Brute force failed: %v", err)
 	}

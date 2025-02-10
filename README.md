@@ -1,6 +1,6 @@
 # bipbf
 
-**bipbf** is a brute force tool for recovering wallets where you have the seed phrase and a known address but forgot the password (aka 25th word).
+**bipbf** is a brute force password-guessing tool for recovering BIP39 (mnemonic seed) wallets where you have the seed phrase and a known address but forgot the password (aka 25th word).
 
 ## Requirements
 

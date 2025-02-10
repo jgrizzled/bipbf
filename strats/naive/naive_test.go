@@ -1,8 +1,10 @@
-package bipbf
+package naive
 
 import (
+	"bipbf"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -16,6 +18,13 @@ func TestNaiveBruteForce(t *testing.T) {
 	defer os.RemoveAll(tmpDir) // clean up
 
 	dbPath := filepath.Join(tmpDir, "test.db")
+
+	// Initialize DB at the test level
+	db, err := bipbf.InitDB(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to initialize database: %v", err)
+	}
+	defer db.Close()
 
 	// Test cases for both BTC and ETH
 	testCases := []struct {
@@ -49,13 +58,12 @@ func TestNaiveBruteForce(t *testing.T) {
 				BatchSize:   10000,
 				MinLen:      1,
 				MaxLen:      1,
-				DbPath:      dbPath,
 				Mnemonic:    tc.mnemonic,
 				Address:     tc.address,
 				AddressType: tc.addressType,
 			}
 
-			result, err := NaiveBruteForce(config)
+			result, err := NaiveBruteForce(db, config)
 			if err != nil {
 				t.Fatalf("NaiveBruteForce failed: %v", err)
 			}
@@ -81,17 +89,23 @@ func BenchmarkNaiveBruteForce(b *testing.B) {
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 
+	// Initialize DB at the benchmark level
+	db, err := bipbf.InitDB(dbPath)
+	if err != nil {
+		b.Fatalf("Failed to initialize database: %v", err)
+	}
+	defer db.Close()
+
 	// Use the same mnemonic and password as the test
 	mnemonic := "swarm security emotion rent eagle meadow submit panic myself list occur siege popular famous hint soon jealous hidden safe primary build quiz sea define"
 	address := "bc1qftzutf0w24y28lhwjuduyuwh7asuljnv8trdrt" // Password: 123
 
 	config := BruteForceConfig{
 		Charset:     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{}\\|;:'\",.<>/?`~ ",
-		Workers:     8,
-		BatchSize:   1000,
+		Workers:     runtime.NumCPU() - 1,
+		BatchSize:   10000,
 		MinLen:      1,
 		MaxLen:      3,
-		DbPath:      dbPath,
 		Mnemonic:    mnemonic,
 		Address:     address,
 		AddressType: "btc-nativesegwit",
@@ -99,7 +113,7 @@ func BenchmarkNaiveBruteForce(b *testing.B) {
 
 	b.ResetTimer() // Reset the timer before the actual benchmark
 
-	result, err := NaiveBruteForce(config)
+	result, err := NaiveBruteForce(db, config)
 	if err != nil {
 		b.Fatalf("NaiveBruteForce failed: %v", err)
 	}

@@ -1,4 +1,4 @@
-package bip
+package bip39
 
 import (
 	"fmt"
@@ -8,8 +8,8 @@ import (
 	"golang.org/x/crypto/sha3"
 )
 
-// GetEthereumAddressFromMnemonic derives an Ethereum address using the BIP44 derivation path m/44'/60'/0'/0/0.
-func GetEthereumAddressFromMnemonic(mnemonic, password string) (string, error) {
+// GetEthereumAddressFromMnemonic derives an Ethereum address using the BIP44 derivation path m/44'/60'/account'/0/0.
+func GetEthereumAddressFromMnemonic(mnemonic, password string, account uint32) (string, error) {
 	// Convert the mnemonic to a seed.
 	seed, err := ConvertMnemonicToSeed(mnemonic, password)
 	if err != nil {
@@ -22,7 +22,7 @@ func GetEthereumAddressFromMnemonic(mnemonic, password string) (string, error) {
 		return "", err
 	}
 
-	// Derive the BIP44 path: m/44'/60'/0'/0/0
+	// Derive the BIP44 path: m/44'/60'/account'/0/0
 	purpose, err := masterKey.Derive(44 + hdkeychain.HardenedKeyStart)
 	if err != nil {
 		return "", err
@@ -31,7 +31,7 @@ func GetEthereumAddressFromMnemonic(mnemonic, password string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	accountKey, err := coinType.Derive(0 + hdkeychain.HardenedKeyStart)
+	accountKey, err := coinType.Derive(account + hdkeychain.HardenedKeyStart)
 	if err != nil {
 		return "", err
 	}

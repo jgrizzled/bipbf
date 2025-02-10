@@ -1,4 +1,4 @@
-package bip
+package bip39
 
 import "testing"
 

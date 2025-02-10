@@ -1,23 +1,27 @@
-package bipbf
+package naive
 
 import (
+	"bipbf"
+	"bipbf/bip39"
+	"database/sql"
 	"fmt"
 	"log"
+	"math"
 	"strings"
 	"sync"
 	"time"
 
-	"bipbf/bip"
+	go_bip39 "github.com/tyler-smith/go-bip39"
 )
 
 // workerResult holds the result of hashing an entire batch.
 // We track batchNumber to handle out-of-order completion.
 type workerResult struct {
-	batchNumber    int
-	lastPassword   string
-	foundPassword  *string
-	possibleResume string
-	rowId          int
+	batchNumber   int
+	lastPassword  string
+	foundPassword *string
+	rowId         int
+	length        int
 }
 
 // batchItem holds the data for a single batch to be processed.
@@ -25,6 +29,7 @@ type batchItem struct {
 	batchNumber int
 	passwords   []string
 	rowId       int
+	length      int
 }
 
 // BruteForceConfig holds all configuration for a brute force run
@@ -34,7 +39,6 @@ type BruteForceConfig struct {
 	BatchSize   int
 	MinLen      int
 	MaxLen      int
-	DbPath      string
 	Mnemonic    string
 	Address     string
 	AddressType string // "btc-nativesegwit" or "eth"
@@ -47,20 +51,27 @@ type BruteForceResult struct {
 }
 
 // NaiveBruteForce performs the naive brute force search with the given configuration.
-// Refactored so that batch generation happens in a separate goroutine (batchProducer).
-func NaiveBruteForce(config BruteForceConfig) (BruteForceResult, error) {
-	db, err := initDB(config.DbPath)
-	if err != nil {
-		return BruteForceResult{}, fmt.Errorf("failed to init DB: %v", err)
+func NaiveBruteForce(db *sql.DB, config BruteForceConfig) (BruteForceResult, error) {
+	address := strings.ToLower(config.Address)
+	mnemonic := strings.ToLower(config.Mnemonic)
+	if !go_bip39.IsMnemonicValid(mnemonic) {
+		return BruteForceResult{}, fmt.Errorf("invalid mnemonic: %s", mnemonic)
 	}
-	defer db.Close()
-
+	if len(address) == 0 {
+		return BruteForceResult{}, fmt.Errorf("address cannot be empty")
+	}
+	if len(config.Charset) == 0 {
+		return BruteForceResult{}, fmt.Errorf("charset cannot be empty")
+	}
+	if len(config.AddressType) == 0 {
+		return BruteForceResult{}, fmt.Errorf("addressType cannot be empty")
+	}
 	// Check existing found password
-	existingPassword, foundAlready, err := getExistingFoundPassword(
+	existingPassword, foundAlready, err := bipbf.GetExistingFoundPassword(
 		db,
 		config.Charset,
-		config.Mnemonic,
-		config.Address,
+		mnemonic,
+		address,
 		config.AddressType,
 	)
 	if err != nil {
@@ -77,7 +88,7 @@ func NaiveBruteForce(config BruteForceConfig) (BruteForceResult, error) {
 	foundPasswordCh := make(chan string, 1)
 
 	// Channel to send batchItem structs to workers
-	batchChan := make(chan batchItem, config.Workers*2)
+	batchChan := make(chan *batchItem, config.Workers*10)
 
 	// Channel to send workerResult structs to aggregator
 	resultChan := make(chan workerResult, config.Workers)
@@ -105,13 +116,16 @@ func NaiveBruteForce(config BruteForceConfig) (BruteForceResult, error) {
 		// Initialize timing variables and batch tracking
 		startTime := time.Now()
 		lastPrintTime := startTime
+		lastDBUpdate := startTime
 
-		// Track last 1000 batches timing
+		// Track last 100 batches timing including lastProcessed password
 		type batchTiming struct {
-			batchNum int
-			time     time.Time
+			batchNum     int
+			time         time.Time
+			lastPassword string
 		}
-		recentBatches := make([]batchTiming, 0, 1000)
+		recentBatches := make([]batchTiming, 0, 100)
+		var currentLength int // holds the current length being processed
 
 		for {
 			select {
@@ -123,6 +137,12 @@ func NaiveBruteForce(config BruteForceConfig) (BruteForceResult, error) {
 						foundPasswordCh <- ""
 					}
 					return
+				}
+
+				// If the length has changed, update and reset recentBatches
+				if currentLength != res.length {
+					currentLength = res.length
+					recentBatches = recentBatches[:0]
 				}
 
 				// Handle found password first, before checking further logic
@@ -140,48 +160,70 @@ func NaiveBruteForce(config BruteForceConfig) (BruteForceResult, error) {
 					return // Exit immediately after finding password
 				}
 
-				// Track batch timing
+				// Track batch timing with the last processed password
 				recentBatches = append(recentBatches, batchTiming{
-					batchNum: res.batchNumber,
-					time:     time.Now(),
+					batchNum:     res.batchNumber,
+					time:         time.Now(),
+					lastPassword: res.lastPassword,
 				})
-				// Keep only last 1000 batches
-				if len(recentBatches) > 1000 {
+				if len(recentBatches) > 100 {
 					recentBatches = recentBatches[1:]
 				}
 
-				// Log average passwords per second every 30 seconds
+				// Log average passwords per second and ETA every 30 seconds
 				now := time.Now()
 				if now.Sub(lastPrintTime) >= 30*time.Second && len(recentBatches) > 0 {
-					// Calculate rate based on recent batches
 					oldestBatch := recentBatches[0]
 					newestBatch := recentBatches[len(recentBatches)-1]
 					batchesProcessed := newestBatch.batchNum - oldestBatch.batchNum + 1
 					timeSpan := newestBatch.time.Sub(oldestBatch.time).Seconds()
 					if timeSpan > 0 {
 						passwordsPerSecond := float64(batchesProcessed*config.BatchSize) / timeSpan
-						log.Printf("Recent average passwords per second (last %d batches): %.2f",
-							len(recentBatches), passwordsPerSecond)
+						// Compute ETA and percentage completion
+						processedIndex := stringToIndex(newestBatch.lastPassword, currentLength, config.Charset)
+						if processedIndex >= 0 {
+							totalPossibilities := math.Pow(float64(len(config.Charset)), float64(currentLength))
+							remaining := totalPossibilities - float64(processedIndex) - 1
+							percentComplete := (float64(processedIndex) + 1) / totalPossibilities * 100
+							var eta time.Duration
+							if passwordsPerSecond > 0 {
+								etaSeconds := remaining / passwordsPerSecond
+								eta = time.Duration(etaSeconds * float64(time.Second))
+							} else {
+								eta = 0
+							}
+							log.Printf("Length: %d, PPS: %.2f, Progress: %.2f%%, ETA: %s",
+								currentLength, passwordsPerSecond, percentComplete, eta)
+						}
 					}
 					lastPrintTime = now
 				}
 
-				// Handle in-order logic for last_processed_pw
+				// Throttle DB update for last_processed_pw to every 5 seconds
 				pending[res.batchNumber] = res
-				for {
-					r, exists := pending[expectedBatch]
-					if !exists {
-						break
+				if time.Since(lastDBUpdate) >= 5*time.Second {
+					var lastProcessed string
+					var updateRowId int
+					for {
+						r, exists := pending[expectedBatch]
+						if !exists {
+							break
+						}
+						lastProcessed = r.lastPassword
+						updateRowId = r.rowId
+						delete(pending, expectedBatch)
+						expectedBatch++
 					}
-					if _, err := db.Exec(`
-						UPDATE naive_run
-						SET last_processed_pw = ?
-						WHERE id = ?
-					`, r.lastPassword, r.rowId); err != nil {
-						log.Printf("Error updating last_processed_pw: %v", err)
+					if lastProcessed != "" {
+						if _, err := db.Exec(`
+							UPDATE naive_run
+							SET last_processed_pw = ?
+							WHERE id = ?
+						`, lastProcessed, updateRowId); err != nil {
+							log.Printf("Error updating last_processed_pw: %v", err)
+						}
 					}
-					delete(pending, expectedBatch)
-					expectedBatch++
+					lastDBUpdate = time.Now()
 				}
 			}
 		}
@@ -206,7 +248,7 @@ func NaiveBruteForce(config BruteForceConfig) (BruteForceResult, error) {
 					if !ok {
 						return
 					}
-					res := processBatch(batch, config.Mnemonic, config.Address, config.AddressType)
+					res := processBatch(batch, mnemonic, address, config.AddressType)
 					// Check cancellation before sending the result
 					select {
 					case <-stopWorkers:
@@ -241,7 +283,7 @@ func NaiveBruteForce(config BruteForceConfig) (BruteForceResult, error) {
 			default:
 			}
 
-			naiveRow, err := getOrCreateNaiveRun(db, config.Charset, length, config.Mnemonic, config.Address, config.AddressType)
+			naiveRow, err := bipbf.GetOrCreateNaiveRun(db, config.Charset, length, config.Mnemonic, address, config.AddressType)
 			if err != nil {
 				log.Fatalf("Failed to get/create naive run row: %v", err)
 			}
@@ -272,10 +314,11 @@ func NaiveBruteForce(config BruteForceConfig) (BruteForceResult, error) {
 				if len(strs) == 0 {
 					break
 				}
-				batchChan <- batchItem{
+				batchChan <- &batchItem{
 					batchNumber: batchNumber,
 					passwords:   strs,
 					rowId:       naiveRow.ID,
+					length:      length,
 				}
 				if nextStr == "" {
 					break
@@ -297,10 +340,7 @@ func NaiveBruteForce(config BruteForceConfig) (BruteForceResult, error) {
 	}()
 
 	// wait for found password
-	select {
-	case fs := <-foundPasswordCh:
-		foundPassword = fs
-	}
+	foundPassword = <-foundPasswordCh
 	// Close all stop channels
 	close(stopWorkers)
 	close(stopAggregator)
@@ -314,24 +354,24 @@ func NaiveBruteForce(config BruteForceConfig) (BruteForceResult, error) {
 
 	wg.Wait()
 
-	// Finally, see if we got a found string
+	// Finally, see if we got a found password
 	if foundPassword != "" {
 		return BruteForceResult{FoundPassword: foundPassword, Found: true}, nil
 	}
 	return BruteForceResult{Found: false}, nil
 }
 
-// processBatch hashes each string in the batch, compares against findHash, returns workerResult.
-// If found, we store the foundString in workerResult.foundString.
-func processBatch(batch batchItem, mnemonic, address, addressType string) workerResult {
+// processBatch derives the address for each password in the batch.
+// If the correct address is found, we store the foundPassword in workerResult.foundPassword.
+func processBatch(batch *batchItem, mnemonic, address, addressType string) workerResult {
 	// Check for empty batch
 	if len(batch.passwords) == 0 {
 		return workerResult{
-			batchNumber:    batch.batchNumber,
-			lastPassword:   "",
-			foundPassword:  nil,
-			possibleResume: "",
-			rowId:          batch.rowId,
+			batchNumber:   batch.batchNumber,
+			lastPassword:  "",
+			foundPassword: nil,
+			rowId:         batch.rowId,
+			length:        batch.length,
 		}
 	}
 
@@ -345,13 +385,13 @@ func processBatch(batch batchItem, mnemonic, address, addressType string) worker
 
 		switch addressType {
 		case "btc-nativesegwit":
-			addr, err := bip.GetAddressFromMnemonic(mnemonic, password, 0, true, 0)
+			addr, err := bip39.GetAddressFromMnemonic(mnemonic, password, 0, true, 0)
 			if err != nil {
 				continue // Skip invalid passwords
 			}
 			derivedAddress = addr.EncodeAddress()
 		case "eth":
-			derivedAddress, err = bip.GetEthereumAddressFromMnemonic(mnemonic, password)
+			derivedAddress, err = bip39.GetEthereumAddressFromMnemonic(mnemonic, password, 0)
 			if err != nil {
 				continue // Skip invalid passwords
 			}
@@ -366,10 +406,10 @@ func processBatch(batch batchItem, mnemonic, address, addressType string) worker
 	}
 
 	return workerResult{
-		batchNumber:    batch.batchNumber,
-		lastPassword:   last,
-		foundPassword:  found,
-		possibleResume: "",
-		rowId:          batch.rowId,
+		batchNumber:   batch.batchNumber,
+		lastPassword:  last,
+		foundPassword: found,
+		rowId:         batch.rowId,
+		length:        batch.length,
 	}
 }

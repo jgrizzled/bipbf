@@ -34,27 +34,9 @@ type NaiveRun struct {
 	Done             int
 }
 
-// initDB creates (if needed) and returns a reference to the SQLite DB.
-func initDB(dbPath string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite3", dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open sqlite db: %w", err)
-	}
-	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("failed to ping sqlite db: %w", err)
-	}
-
-	// Create table if not exists
-	if _, err := db.Exec(createTableSQL); err != nil {
-		return nil, fmt.Errorf("failed to create naive_run table: %w", err)
-	}
-
-	return db, nil
-}
-
-// getExistingFoundPassword checks if there's already a found_password for (charset, mnemonic, address, addressType).
+// GetExistingFoundPassword checks if there's already a found_password for (charset, mnemonic, address, addressType).
 // If found, returns that string (and true). Otherwise returns ("", false).
-func getExistingFoundPassword(db *sql.DB, charset, mnemonic, address, addressType string) (string, bool, error) {
+func GetExistingFoundPassword(db *sql.DB, charset, mnemonic, address, addressType string) (string, bool, error) {
 	query := `
 		SELECT found_password
 		FROM naive_run
@@ -75,9 +57,27 @@ func getExistingFoundPassword(db *sql.DB, charset, mnemonic, address, addressTyp
 	return "", false, nil
 }
 
-// getOrCreateNaiveRun retrieves the row for (charset, length, mnemonic, address, addressType).
+// InitDB creates (if needed) and returns a reference to the SQLite DB.
+func InitDB(dbPath string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open sqlite db: %w", err)
+	}
+	if err := db.Ping(); err != nil {
+		return nil, fmt.Errorf("failed to ping sqlite db: %w", err)
+	}
+
+	// Create table if not exists
+	if _, err := db.Exec(createTableSQL); err != nil {
+		return nil, fmt.Errorf("failed to create naive_run table: %w", err)
+	}
+
+	return db, nil
+}
+
+// GetOrCreateNaiveRun retrieves the row for (charset, length, mnemonic, address, addressType).
 // If none exists, it creates one with last_processed_pw = "" and done = 0.
-func getOrCreateNaiveRun(db *sql.DB, charset string, length int, mnemonic, address, addressType string) (*NaiveRun, error) {
+func GetOrCreateNaiveRun(db *sql.DB, charset string, length int, mnemonic, address, addressType string) (*NaiveRun, error) {
 	// First attempt to SELECT
 	selectQuery := `
 		SELECT id, charset, length, last_processed_pw, mnemonic, address, address_type, found_password, done
@@ -123,31 +123,4 @@ func getOrCreateNaiveRun(db *sql.DB, charset string, length int, mnemonic, addre
 		ps.FoundPassword = nil
 	}
 	return &ps, nil
-}
-
-// getLowestNonDoneNaive returns the smallest length > 0 for which done = 0.
-func getLowestNonDoneNaive(db *sql.DB, charset, findHash string, minLen, maxLen int) (int, error) {
-	query := `
-		SELECT length
-		FROM naive_run
-		WHERE charset = ? AND address = ? AND mnemonic = ? AND done = 0
-		ORDER BY length ASC
-		LIMIT 1
-	`
-	row := db.QueryRow(query, charset, findHash)
-	var length int
-	err := row.Scan(&length)
-	if err == sql.ErrNoRows {
-		// Means no row found for done = 0, possibly we're done or need to create new
-		// We'll return -1 to signal there's no existing undone row
-		return -1, nil
-	} else if err != nil {
-		return 0, err
-	}
-
-	// Make sure we only return lengths within [minLen..maxLen].
-	if length < minLen || length > maxLen {
-		return -1, nil
-	}
-	return length, nil
 }

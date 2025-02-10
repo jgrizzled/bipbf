@@ -1,6 +1,6 @@
 // Adapted from github.com/KaiWitt/go-bip84
 // Fixed some dependency issues
-package bip
+package bip39
 
 import (
 	"encoding/binary"
