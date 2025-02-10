@@ -1,6 +1,6 @@
 module bipbf
 
-go 1.23.4
+go 1.22
 
 require (
 	github.com/btcsuite/btcd v0.24.2
