@@ -283,7 +283,7 @@ func NaiveBruteForce(db *sql.DB, config BruteForceConfig) (BruteForceResult, err
 			default:
 			}
 
-			naiveRow, err := bipbf.GetOrCreateNaiveRun(db, config.Charset, length, config.Mnemonic, address, config.AddressType)
+			naiveRow, err := bipbf.GetOrCreateNaiveRun(db, config.Charset, length, mnemonic, address, config.AddressType)
 			if err != nil {
 				log.Fatalf("Failed to get/create naive run row: %v", err)
 			}
@@ -299,7 +299,12 @@ func NaiveBruteForce(db *sql.DB, config BruteForceConfig) (BruteForceResult, err
 				continue
 			}
 
-			currentStr := naiveRow.LastProcessedStr
+			currentStr := naiveRow.LastProcessedPw
+			if currentStr == "" {
+				log.Printf("No last processed password found; starting length %d from beginning", length)
+			} else {
+				log.Printf("Resuming from last processed password for length %d: %s", length, currentStr)
+			}
 
 			// Produce batches for this length
 			for {

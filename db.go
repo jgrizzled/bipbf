@@ -3,6 +3,7 @@ package bipbf
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -23,20 +24,24 @@ CREATE TABLE IF NOT EXISTS naive_run (
 `
 
 type NaiveRun struct {
-	ID               int
-	Charset          string
-	Length           int
-	LastProcessedStr string
-	Mnemonic         string
-	Address          string
-	AddressType      string
-	FoundPassword    *string
-	Done             int
+	ID              int
+	Charset         string
+	Length          int
+	LastProcessedPw string
+	Mnemonic        string
+	Address         string
+	AddressType     string
+	FoundPassword   *string
+	Done            int
 }
 
 // GetExistingFoundPassword checks if there's already a found_password for (charset, mnemonic, address, addressType).
 // If found, returns that string (and true). Otherwise returns ("", false).
 func GetExistingFoundPassword(db *sql.DB, charset, mnemonic, address, addressType string) (string, bool, error) {
+	// Convert mnemonic and address to lowercase
+	mnemonic = strings.ToLower(mnemonic)
+	address = strings.ToLower(address)
+
 	query := `
 		SELECT found_password
 		FROM naive_run
@@ -78,6 +83,10 @@ func InitDB(dbPath string) (*sql.DB, error) {
 // GetOrCreateNaiveRun retrieves the row for (charset, length, mnemonic, address, addressType).
 // If none exists, it creates one with last_processed_pw = "" and done = 0.
 func GetOrCreateNaiveRun(db *sql.DB, charset string, length int, mnemonic, address, addressType string) (*NaiveRun, error) {
+	// Convert mnemonic and address to lowercase
+	mnemonic = strings.ToLower(mnemonic)
+	address = strings.ToLower(address)
+
 	// First attempt to SELECT
 	selectQuery := `
 		SELECT id, charset, length, last_processed_pw, mnemonic, address, address_type, found_password, done
@@ -88,7 +97,7 @@ func GetOrCreateNaiveRun(db *sql.DB, charset string, length int, mnemonic, addre
 	row := db.QueryRow(selectQuery, charset, length, mnemonic, address, addressType)
 	var ps NaiveRun
 	var tempFound sql.NullString
-	err := row.Scan(&ps.ID, &ps.Charset, &ps.Length, &ps.LastProcessedStr, &ps.Mnemonic, &ps.Address, &ps.AddressType, &tempFound, &ps.Done)
+	err := row.Scan(&ps.ID, &ps.Charset, &ps.Length, &ps.LastProcessedPw, &ps.Mnemonic, &ps.Address, &ps.AddressType, &tempFound, &ps.Done)
 	if err == sql.ErrNoRows {
 		// Create the row
 		insertQuery := `
@@ -101,15 +110,15 @@ func GetOrCreateNaiveRun(db *sql.DB, charset string, length int, mnemonic, addre
 		}
 		newID, _ := res.LastInsertId()
 		ps = NaiveRun{
-			ID:               int(newID),
-			Charset:          charset,
-			Length:           length,
-			LastProcessedStr: "",
-			Mnemonic:         mnemonic,
-			Address:          address,
-			AddressType:      addressType,
-			FoundPassword:    nil,
-			Done:             0,
+			ID:              int(newID),
+			Charset:         charset,
+			Length:          length,
+			LastProcessedPw: "",
+			Mnemonic:        mnemonic,
+			Address:         address,
+			AddressType:     addressType,
+			FoundPassword:   nil,
+			Done:            0,
 		}
 		return &ps, nil
 	} else if err != nil {

@@ -69,7 +69,7 @@ func main() {
 			if err != nil {
 				log.Fatalf("Failed to read charset.txt: %v", err)
 			}
-			finalCharset = strings.TrimSpace(string(bytes))
+			finalCharset = string(bytes)
 		}
 		// If still empty, default to alphanumeric
 		if finalCharset == "" {
@@ -98,9 +98,9 @@ func main() {
 	if finalMnemonic == "" {
 		// Check env var first
 		if envMnemonic := os.Getenv("BIPBF_MNEMONIC"); envMnemonic != "" {
-			finalMnemonic = envMnemonic
+			finalMnemonic = strings.ToLower(strings.TrimSpace(envMnemonic))
 		} else if bytes, err := os.ReadFile("mnemonic.txt"); err == nil {
-			finalMnemonic = strings.TrimSpace(string(bytes))
+			finalMnemonic = strings.ToLower(strings.TrimSpace(string(bytes)))
 		}
 	}
 	if finalMnemonic == "" {
@@ -112,9 +112,9 @@ func main() {
 	if finalAddress == "" {
 		// Check env var first
 		if envAddress := os.Getenv("BIPBF_ADDRESS"); envAddress != "" {
-			finalAddress = envAddress
+			finalAddress = strings.ToLower(strings.TrimSpace(envAddress))
 		} else if bytes, err := os.ReadFile("address.txt"); err == nil {
-			finalAddress = strings.TrimSpace(string(bytes))
+			finalAddress = strings.ToLower(strings.TrimSpace(string(bytes)))
 		}
 	}
 	if finalAddress == "" {
@@ -151,7 +151,7 @@ func main() {
 		AddressType: finalAddressType,
 	}
 
-	fmt.Printf("Charset: %q\n", config.Charset)
+	fmt.Printf("Charset:\n%q\n", config.Charset)
 	fmt.Printf("Workers: %d\n", config.Workers)
 	fmt.Printf("Address to find: %s\n", config.Address)
 	fmt.Printf("Batch size: %d\n", config.BatchSize)
