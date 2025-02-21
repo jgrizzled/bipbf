@@ -28,8 +28,8 @@
    ```bash
    export BIPBF_MNEMONIC="your mnemonic phrase"
    export BIPBF_ADDRESS="your address"
-   export BIPBF_ADDRESS_TYPE="btc-nativesegwit" # or "eth"
-   ./bin/bipbf --naive --maxLen 5
+   export BIPBF_ADDRESS_TYPE="btc-bech32" # or "eth"
+   ./bin/bipbf --mode exhaustive --len 1
    ```
 
 ## License
