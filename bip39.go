@@ -13,9 +13,11 @@ import (
 
 // GetAddresses derives multiple cryptocurrency addresses from a mnemonic phrase
 // using the appropriate BIP standard for the given address type:
-// - BTC: BIP84 derivation path m/84'/0'/account'/0/index
-// - ETH: BIP44 derivation path m/44'/60'/account'/0/index
-func GetAddresses(addressType string, mnemonic, password string, startAccount, endAccount, startAddressIndex, endAddressIndex uint32) ([]string, error) {
+// - btc-legacy: BIP44 derivation path m/44'/0'/account'/0/index
+// - btc-segwit: BIP49 derivation path m/49'/0'/account'/0/index
+// - btc-bech32: BIP84 derivation path m/84'/0'/account'/0/index
+// - eth: BIP44 derivation path m/44'/60'/account'/0/index
+func GetAddresses(addressType string, mnemonic, password string, startAccount, endAccount, startAddressIndex, endAddressIndex int) ([]string, error) {
 	// Validate the mnemonic
 	if !bip39.IsMnemonicValid(mnemonic) {
 		return nil, errors.New("mnemonic is not valid")
@@ -44,6 +46,12 @@ func GetAddresses(addressType string, mnemonic, password string, startAccount, e
 	case "btc-bech32":
 		purpose = 84
 		coinType = 0
+	case "btc-segwit":
+		purpose = 49
+		coinType = 0
+	case "btc-legacy":
+		purpose = 44
+		coinType = 0
 	case "eth":
 		purpose = 44
 		coinType = 60
@@ -67,7 +75,7 @@ func GetAddresses(addressType string, mnemonic, password string, startAccount, e
 
 	// Derive addresses for each account in the range
 	for account := startAccount; account <= endAccount; account++ {
-		accountKey, err := coinTypeKey.Derive(account + hdkeychain.HardenedKeyStart)
+		accountKey, err := coinTypeKey.Derive(uint32(account + hdkeychain.HardenedKeyStart))
 		if err != nil {
 			return nil, err
 		}
@@ -78,7 +86,7 @@ func GetAddresses(addressType string, mnemonic, password string, startAccount, e
 
 		// Derive addresses for each index in the range
 		for index := startAddressIndex; index <= endAddressIndex; index++ {
-			addressKey, err := change.Derive(index)
+			addressKey, err := change.Derive(uint32(index))
 			if err != nil {
 				return nil, err
 			}
@@ -95,6 +103,33 @@ func GetAddresses(addressType string, mnemonic, password string, startAccount, e
 				compressed := pubKey.SerializeCompressed()
 				hash160 := btcutil.Hash160(compressed)
 				addr, err := btcutil.NewAddressWitnessPubKeyHash(hash160, &chaincfg.MainNetParams)
+				if err != nil {
+					return nil, err
+				}
+				address = addr.EncodeAddress()
+
+			case "btc-segwit":
+				// Get compressed public key
+				compressed := pubKey.SerializeCompressed()
+				keyHash := btcutil.Hash160(compressed)
+
+				// Create the witness program (OP_0 + 20-byte key hash)
+				witnessProgram := append([]byte{0x00, 0x14}, keyHash...)
+
+				// Hash the witness program
+				scriptHash := btcutil.Hash160(witnessProgram)
+
+				// Create P2SH address
+				addr, err := btcutil.NewAddressScriptHashFromHash(scriptHash, &chaincfg.MainNetParams)
+				if err != nil {
+					return nil, err
+				}
+				address = addr.EncodeAddress()
+
+			case "btc-legacy":
+				compressed := pubKey.SerializeCompressed()
+				hash160 := btcutil.Hash160(compressed)
+				addr, err := btcutil.NewAddressPubKeyHash(hash160, &chaincfg.MainNetParams)
 				if err != nil {
 					return nil, err
 				}

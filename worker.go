@@ -9,8 +9,7 @@ import (
 // worker processes each batch by deriving addresses and checking if any match.
 func worker(
 	mnemonic string,
-	address string,
-	addressType string,
+	config *Config,
 	batchChan <-chan batchItem,
 	resultChan chan<- workerResult,
 	stopChan <-chan struct{},
@@ -44,7 +43,7 @@ func worker(
 			return
 		}
 
-		res := processBatch(batch.rows, mnemonic, address, addressType)
+		res := processBatch(batch.rows, mnemonic, config)
 
 		// Measure wait time when sending to resultChan
 		startResult := time.Now()
@@ -65,7 +64,7 @@ func worker(
 }
 
 // processBatch runs bip39 derivation for each password in the batch.
-func processBatch(rows []passwordRow, mnemonic, address, addressType string) workerResult {
+func processBatch(rows []passwordRow, mnemonic string, config *Config) workerResult {
 	if len(rows) == 0 {
 		return workerResult{
 			rowIDs:        nil,
@@ -78,13 +77,28 @@ func processBatch(rows []passwordRow, mnemonic, address, addressType string) wor
 		pw := row.Str
 		var derivedAddresses []string
 		var err error
-		derivedAddresses, err = GetAddresses(addressType, mnemonic, pw, 0, 0, 0, 0)
+		derivedAddresses, err = GetAddresses(
+			config.FindAddressType,
+			mnemonic,
+			pw,
+			config.AccountStart,
+			config.AccountEnd,
+			config.AddressStart,
+			config.AddressEnd,
+		)
 		if err != nil {
 			log.Fatalf("GetAddresses error: %v", err)
 		}
-		if len(derivedAddresses) > 0 && strings.EqualFold(derivedAddresses[0], address) {
-			copyP := pw
-			found = &copyP
+
+		// Check all derived addresses
+		for _, addr := range derivedAddresses {
+			if strings.EqualFold(addr, config.FindAddress) {
+				copyP := pw
+				found = &copyP
+				break
+			}
+		}
+		if found != nil {
 			break
 		}
 	}

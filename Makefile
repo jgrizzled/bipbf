@@ -1,4 +1,3 @@
-# Change these variables as necessary.
 main_package_path = ./cmd
 binary_name = bipbf
 
@@ -10,7 +9,7 @@ help:
 
 ## audit: run quality control checks
 .PHONY: audit
-audit: test
+audit:
 	go mod tidy -diff
 	go mod verify
 	test -z "$(shell gofmt -l .)" 
@@ -22,6 +21,7 @@ audit: test
 .PHONY: test
 test:
 	go test -v -race -buildvcs ./...
+	./cmd/bipbf_test.sh
 
 ## tidy: tidy modfiles and format .go files
 .PHONY: tidy

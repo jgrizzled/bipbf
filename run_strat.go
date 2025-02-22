@@ -17,13 +17,12 @@ type RuntimeArgs struct {
 // strategy's generator function.
 func RunStrategy(
 	db *sql.DB,
-	configID int,
+	config *Config,
 	gen *Generation,
 	mnemonic string,
-	address string,
-	addressType string,
 	runtimeArgs RuntimeArgs,
 	strategy Strategy,
+	discordBot *DiscordBot,
 ) (string, error) {
 	if gen.Done == 1 {
 		log.Printf("RunStrategy: Generation %d is already done. Skipping.\n", gen.ID)
@@ -31,7 +30,7 @@ func RunStrategy(
 	}
 
 	// Possibly the user found the password previously
-	foundPwd, err := getConfigFoundPassword(db, configID)
+	foundPwd, err := getConfigFoundPassword(db, config.ID)
 	if err != nil {
 		return "", fmt.Errorf("RunStrategy: failed to check found_password: %w", err)
 	}
@@ -62,7 +61,7 @@ func RunStrategy(
 		workerWg.Add(1)
 		go func() {
 			defer workerWg.Done()
-			worker(mnemonic, address, addressType, batchChan, resultChan, stopChan)
+			worker(mnemonic, config, batchChan, resultChan, stopChan)
 		}()
 	}
 
@@ -84,14 +83,14 @@ func RunStrategy(
 	go func() {
 		defer wg.Done()
 		defer close(stopReader) // Signal stopReader when generator finishes
-		generator(db, configID, gen, runtimeArgs, strategy, stopChan)
+		generator(db, config.ID, gen, runtimeArgs, strategy, stopChan, discordBot)
 		time.Sleep(2 * time.Second) // Give reader a chance to read last batch
 	}()
 
 	// Now wait for either a found password or aggregator exit
 	found := <-foundCh
 	if found != "" {
-		markConfigFoundPassword(db, configID, found)
+		markConfigFoundPassword(db, config.ID, found)
 		updateGenerationDone(db, gen.ID)
 	}
 

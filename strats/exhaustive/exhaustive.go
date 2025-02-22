@@ -5,6 +5,35 @@ import (
 	"fmt"
 )
 
+type ExhaustiveStrategy struct {
+	totalStrings int64
+	length       int
+	charset      string
+}
+
+func NewStrategy(params map[string]interface{}) (*ExhaustiveStrategy, error) {
+	charset, ok := params["charset"].(string)
+	if !ok {
+		return nil, errors.New("NewStrategy: charset is not a string")
+	}
+
+	lengthFloat, ok := params["length"].(float64)
+	if !ok {
+		return nil, errors.New("NewStrategy: length is not a number")
+	}
+	length := int(lengthFloat)
+
+	if length < 0 {
+		return nil, errors.New("NewStrategy: length cannot be negative")
+	}
+
+	s := &ExhaustiveStrategy{
+		charset: charset,
+		length:  length,
+	}
+	return s, nil
+}
+
 // initializeIndices initializes the indices slice based on the current string.
 func initializeIndices(current string, charset string, length int) ([]int, error) {
 	indices := make([]int, length)
@@ -47,16 +76,9 @@ func buildStringFromIndices(indices []int, charset string) string {
 
 // GenerateNextStrings generates n strings starting from the given current string
 // using the provided charset.
-func GenerateNextStrings(params map[string]interface{}, progress map[string]interface{}, n int) ([]string, map[string]interface{}, error) {
-	charset, ok := params["charset"].(string)
-	if !ok {
-		return nil, nil, errors.New("generateNextNStrings: charset is not a string")
-	}
-	lengthFloat, ok := params["length"].(float64)
-	if !ok {
-		return nil, nil, errors.New("generateNextNStrings: length is not a number")
-	}
-	length := int(lengthFloat)
+func (s *ExhaustiveStrategy) GenerateNextStrings(progress map[string]interface{}, n int) ([]string, map[string]interface{}, error) {
+	length := s.length
+	charset := s.charset
 
 	current, hasCurrent := progress["last_password"].(string)
 
@@ -93,23 +115,21 @@ func indexOf(b byte, charset string) int {
 	return -1
 }
 
-// calcTotalPossibilities calculates the total number of possible passwords
-// for the given exhaustive parameters
-func CalcTotalPossibilities(params map[string]interface{}) (int64, error) {
-	charset, ok := params["charset"].(string)
-	if !ok {
-		return 0, errors.New("calcTotalPossibilities: charset is not a string")
+// GetTotalStrings calculates the total number of strings
+// output for the given parameters
+func (s *ExhaustiveStrategy) GetTotalStrings() (int64, error) {
+	if s.totalStrings != 0 {
+		return s.totalStrings, nil
 	}
-	lengthFloat, ok := params["length"].(float64) // JSON numbers are floats
-	if !ok {
-		return 0, errors.New("calcTotalPossibilities: length is not a number")
-	}
-	length := int(lengthFloat)
+	charset := s.charset
+	length := s.length
 
 	base := len(charset)
 	totalCombos := int64(1)
 	for i := 0; i < length; i++ {
 		totalCombos *= int64(base)
 	}
+
+	s.totalStrings = totalCombos
 	return totalCombos, nil
 }

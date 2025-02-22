@@ -8,84 +8,162 @@ import (
 )
 
 func TestGetAddresses(t *testing.T) {
+	// Test data setup
 	mnemonic := "swarm security emotion rent eagle meadow submit panic myself list occur siege popular famous hint soon jealous hidden safe primary build quiz sea define"
 	password := "test"
 
-	t.Run("Bitcoin addresses", func(t *testing.T) {
-		expectedAddresses := []string{
-			"bc1q7327vh7z7fardnla4dpmztcnewn80hcz7d4y0g", // account 0, index 0
-			"bc1q7pwzp2jwrnkf4fpmvha8mz88hvada5q9jurl8a", // account 0, index 1
-			"bc1qmr46sndv5zf648fmnjd5lw9stk63nfwhpgl9tj", // account 1, index 0
-			"bc1qsty8nqer4nulr9f6dpw9m3dch5zpw3gmxqkqwg", // account 1, index 1
-		}
+	tests := []struct {
+		name          string
+		addrType      string
+		mnemonic      string
+		password      string
+		startAccount  int
+		endAccount    int
+		startIndex    int
+		endIndex      int
+		expectedAddrs []string
+		expectError   bool
+	}{
+		{
+			name:         "Bitcoin Bech32",
+			addrType:     "btc-bech32",
+			mnemonic:     mnemonic,
+			password:     password,
+			startAccount: 0,
+			endAccount:   1,
+			startIndex:   0,
+			endIndex:     1,
+			expectedAddrs: []string{
+				"bc1q7327vh7z7fardnla4dpmztcnewn80hcz7d4y0g", // account 0, index 0
+				"bc1q7pwzp2jwrnkf4fpmvha8mz88hvada5q9jurl8a", // account 0, index 1
+				"bc1qmr46sndv5zf648fmnjd5lw9stk63nfwhpgl9tj", // account 1, index 0
+				"bc1qsty8nqer4nulr9f6dpw9m3dch5zpw3gmxqkqwg", // account 1, index 1
+			},
+			expectError: false,
+		},
+		{
+			name:         "Bitcoin Segwit",
+			addrType:     "btc-segwit",
+			mnemonic:     mnemonic,
+			password:     password,
+			startAccount: 0,
+			endAccount:   1,
+			startIndex:   0,
+			endIndex:     1,
+			expectedAddrs: []string{
+				"3R1Wxro6AGazBvQVSKyvkNqvssxdGPivz9", // account 0, index 0
+				"347DLrfztJBc4oTQuaN8ixfNFxvwto35G3", // account 0, index 1
+				"33noPkxrbzw6m5XKSxKyveCi54gXtzq5fU", // account 1, index 0
+				"3HK3JrEQ5KqzuhKUDakxNfPhrfBPuKEV3J", // account 1, index 1
+			},
+			expectError: false,
+		},
+		{
+			name:         "Bitcoin Legacy",
+			addrType:     "btc-legacy",
+			mnemonic:     mnemonic,
+			password:     password,
+			startAccount: 0,
+			endAccount:   1,
+			startIndex:   0,
+			endIndex:     1,
+			expectedAddrs: []string{
+				"1FzwLAPh2jHZtWmGm4CHRbKae8gQzdiMTo", // account 0, index 0
+				"12SR2X2gJXM69oezkNp34n3wrxoMmTtkQE", // account 0, index 1
+				"1GtbZvCVQoyvT4UTCnZ24r8MELd3HxS737", // account 1, index 0
+				"1GBYvGv9Ab6Lpq2Mi6RGJJ62rmyrBaDgQb", // account 1, index 1
+			},
+			expectError: false,
+		},
+		{
+			name:         "Ethereum addresses",
+			addrType:     "eth",
+			mnemonic:     mnemonic,
+			password:     password,
+			startAccount: 0,
+			endAccount:   0,
+			startIndex:   0,
+			endIndex:     2,
+			expectedAddrs: []string{
+				"0xEAD855DA50ac7bb694746401BCda4d148F96dAd5", // account 0, index 0
+				"0x4427B403a7Bc9e45Cf48f3caEdB011978f82AEF1", // account 0, index 1
+				"0xBba2162CA8b18D3210B33Dc26cADaF1DfA579060", // account 0, index 2
+			},
+			expectError: false,
+		},
+		{
+			name:         "Invalid address type",
+			addrType:     "INVALID",
+			mnemonic:     mnemonic,
+			password:     password,
+			startAccount: 0,
+			endAccount:   0,
+			startIndex:   0,
+			endIndex:     0,
+			expectError:  true,
+		},
+		{
+			name:         "Invalid mnemonic",
+			addrType:     "btc-bech32",
+			mnemonic:     "invalid mnemonic",
+			password:     password,
+			startAccount: 0,
+			endAccount:   0,
+			startIndex:   0,
+			endIndex:     0,
+			expectError:  true,
+		},
+		{
+			name:         "Invalid account range",
+			addrType:     "btc-bech32",
+			mnemonic:     mnemonic,
+			password:     password,
+			startAccount: 1,
+			endAccount:   0,
+			startIndex:   0,
+			endIndex:     0,
+			expectError:  true,
+		},
+		{
+			name:         "Invalid index range",
+			addrType:     "btc-bech32",
+			mnemonic:     mnemonic,
+			password:     password,
+			startAccount: 0,
+			endAccount:   0,
+			startIndex:   1,
+			endIndex:     0,
+			expectError:  true,
+		},
+	}
 
-		// Derive addresses for accounts 0-1 and indexes 0-1
-		addrs, err := GetAddresses("btc-bech32", mnemonic, password, 0, 1, 0, 1)
-		if err != nil {
-			t.Fatalf("Error deriving Bitcoin addresses: %v", err)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			addrs, err := GetAddresses(tt.addrType, tt.mnemonic, tt.password,
+				tt.startAccount, tt.endAccount, tt.startIndex, tt.endIndex)
 
-		if len(addrs) != len(expectedAddresses) {
-			t.Fatalf("Expected %d addresses, got %d", len(expectedAddresses), len(addrs))
-		}
-
-		for i, expectedAddr := range expectedAddresses {
-			if addrs[i] != expectedAddr {
-				t.Errorf("Bitcoin address %d: expected %s, got %s", i, expectedAddr, addrs[i])
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("Expected error but got nil")
+				}
+				return
 			}
-		}
-	})
 
-	t.Run("Ethereum addresses", func(t *testing.T) {
-		expectedAddresses := []string{
-			strings.ToLower("0xEAD855DA50ac7bb694746401BCda4d148F96dAd5"), // account 0, index 0
-			strings.ToLower("0x4427B403a7Bc9e45Cf48f3caEdB011978f82AEF1"), // account 0, index 1
-			strings.ToLower("0xBba2162CA8b18D3210B33Dc26cADaF1DfA579060"), // account 0, index 2
-		}
-
-		addresses, err := GetAddresses("eth", mnemonic, password, 0, 0, 0, 2)
-		if err != nil {
-			t.Fatalf("Error deriving Ethereum addresses: %v", err)
-		}
-
-		if len(addresses) != len(expectedAddresses) {
-			t.Fatalf("Expected %d addresses, got %d", len(expectedAddresses), len(addresses))
-		}
-
-		for i, expectedAddr := range expectedAddresses {
-			if strings.ToLower(addresses[i]) != expectedAddr {
-				t.Errorf("Ethereum address %d: expected %s, got %s", i, expectedAddr, addresses[i])
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
 			}
-		}
-	})
 
-	t.Run("Invalid address type", func(t *testing.T) {
-		_, err := GetAddresses("INVALID", mnemonic, password, 0, 0, 0, 0)
-		if err == nil {
-			t.Error("Expected error for invalid address type, got nil")
-		}
-	})
+			if len(addrs) != len(tt.expectedAddrs) {
+				t.Fatalf("Expected %d addresses, got %d", len(tt.expectedAddrs), len(addrs))
+			}
 
-	t.Run("Invalid mnemonic", func(t *testing.T) {
-		_, err := GetAddresses("btc-bech32", "invalid mnemonic", password, 0, 0, 0, 0)
-		if err == nil {
-			t.Error("Expected error for invalid mnemonic, got nil")
-		}
-	})
-
-	t.Run("Invalid account range", func(t *testing.T) {
-		_, err := GetAddresses("btc-bech32", mnemonic, password, 1, 0, 0, 0)
-		if err == nil {
-			t.Error("Expected error for invalid account range, got nil")
-		}
-	})
-
-	t.Run("Invalid index range", func(t *testing.T) {
-		_, err := GetAddresses("btc-bech32", mnemonic, password, 0, 0, 1, 0)
-		if err == nil {
-			t.Error("Expected error for invalid index range, got nil")
-		}
-	})
+			for i, expectedAddr := range tt.expectedAddrs {
+				if !strings.EqualFold(addrs[i], expectedAddr) {
+					t.Errorf("Address %d: expected %s, got %s", i, expectedAddr, addrs[i])
+				}
+			}
+		})
+	}
 }
 
 func BenchmarkGetAddresses(b *testing.B) {

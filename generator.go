@@ -3,19 +3,20 @@ package bipbf
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"time"
 )
 
-type Strategy struct {
-	CalcTotalPossibilities func(params map[string]interface{}) (int64, error)
-	GenerateNextNStrings   func(params map[string]interface{}, progress map[string]interface{}, n int) ([]string, map[string]interface{}, error)
+type Strategy interface {
+	GetTotalStrings() (int64, error)
+	GenerateNextStrings(progress map[string]interface{}, n int) ([]string, map[string]interface{}, error)
 }
 
 // generator calls the generator function for a strategy.
 // It reads the generation row (including params and progress), enumerates passwords,
 // and inserts them into the password table in batches.
-// stopChan is signaled when the aggregator finishes or the password is found.
+// stopChan is signaled when the password is found.
 func generator(
 	db *sql.DB,
 	configID int,
@@ -23,6 +24,7 @@ func generator(
 	runtimeArgs RuntimeArgs,
 	strategy Strategy,
 	stopChan <-chan struct{},
+	bot *DiscordBot,
 ) {
 
 	if genRow.Done == 1 {
@@ -30,15 +32,9 @@ func generator(
 		return
 	}
 
-	var params map[string]interface{}
-	if err := json.Unmarshal([]byte(genRow.Params), &params); err != nil {
-		log.Printf("RunGenerator: error parsing exhaustive params: %v", err)
-		return
-	}
-
 	// If total_count is 0, calculate and store it
 	if genRow.TotalCount == 0 {
-		tp, err := strategy.CalcTotalPossibilities(params)
+		tp, err := strategy.GetTotalStrings()
 		if err != nil {
 			log.Fatalf("RunGenerator: error calculating total count: %v", err)
 			return
@@ -68,16 +64,10 @@ func generator(
 	}
 
 	lastPrintTime := time.Now()
+	lastDiscordTime := lastPrintTime
 	startTime := lastPrintTime
 	var generatedThisRun int64 = 0
-	iterationStart := time.Now()
-
-	if _, ok := progress["last_password"]; !ok {
-		log.Printf("Starting generation for length %v", params["length"])
-	} else {
-		overallProgress := (float64(genRow.GeneratedCount) / float64(genRow.TotalCount)) * 100.0
-		log.Printf("Resuming generation, progress: %.2f%% complete", overallProgress)
-	}
+	iterationStart := lastPrintTime
 
 	for {
 		// Allow the stop channel to trigger immediate exit
@@ -98,9 +88,17 @@ func generator(
 			if pps > 0 {
 				etaSec = float64(remaining) / pps
 			}
-			log.Printf("Progress: %.2f%%, pps: %.2f, ETA: %v, Run Time: %v, Total Run Time: %v",
+			logMessage := fmt.Sprintf("Progress: %.2f%%, pps: %.2f, ETA: %v, Run Time: %v, Total Run Time: %v",
 				overallProgress, pps, time.Duration(etaSec*float64(time.Second)), time.Duration(elapsedThisRun*float64(time.Second)), time.Duration(genRow.ElapsedMs*int64(time.Millisecond)))
+			log.Print(logMessage)
 			lastPrintTime = now
+
+			if bot != nil && time.Since(lastDiscordTime) >= 24*time.Hour {
+				if err := bot.SendMessage(logMessage); err != nil {
+					log.Printf("Error sending Discord message: %v", err)
+				}
+				lastDiscordTime = now // Update lastDiscordTime
+			}
 		}
 		// -------------------------------------------------------------------------------------
 
@@ -117,7 +115,7 @@ func generator(
 		}
 
 		// Generate the next batch of password strings
-		strs, newProgress, err := strategy.GenerateNextNStrings(params, progress, runtimeArgs.BatchSize)
+		strs, newProgress, err := strategy.GenerateNextStrings(progress, runtimeArgs.BatchSize)
 		if err != nil {
 			log.Fatalf("RunGenerator: error generating next strings: %v", err)
 			return
@@ -129,8 +127,19 @@ func generator(
 			break
 		}
 
-		// Insert the batch into the DB (ignoring duplicates).
-		err = insertPasswords(db, configID, strs)
+		// Deduplicate strings before insertion
+		uniqueStrs := make([]string, 0, len(strs))
+		seen := make(map[string]bool)
+		for _, str := range strs {
+			// Skip empty strings and duplicates
+			if str != "" && !seen[str] {
+				seen[str] = true
+				uniqueStrs = append(uniqueStrs, str)
+			}
+		}
+
+		// Insert the deduplicated batch into the DB (ignoring duplicates).
+		err = insertPasswords(db, configID, uniqueStrs)
 		if err != nil {
 			log.Printf("RunGenerator: error inserting passwords: %v", err)
 			return
@@ -161,4 +170,11 @@ func generator(
 	log.Printf("Generation complete: total generated: %d passwords. Time elapsed: %v", genRow.GeneratedCount, time.Since(startTime))
 	// Mark generation done
 	updateGenerationDone(db, genRow.ID)
+
+	if bot != nil {
+		message := fmt.Sprintf("Finished generation %d for config %d", genRow.ID, configID)
+		if err := bot.SendMessage(message); err != nil {
+			log.Printf("Error sending Discord message: %v", err)
+		}
+	}
 }

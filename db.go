@@ -23,8 +23,13 @@ CREATE TABLE IF NOT EXISTS config (
 	mnemonic_hash TEXT NOT NULL,
 	find_address TEXT NOT NULL,
 	find_address_type TEXT NOT NULL,
+	-- account/address index ranges
+	account_start INTEGER NOT NULL DEFAULT 0,
+	account_end INTEGER NOT NULL DEFAULT 0,
+	address_start INTEGER NOT NULL DEFAULT 0,
+	address_end INTEGER NOT NULL DEFAULT 0,
 	found_password TEXT,
-	UNIQUE(mnemonic_hash, find_address, find_address_type)
+	UNIQUE(mnemonic_hash, find_address, account_start, account_end, address_start, address_end)
 );
 
 CREATE TABLE IF NOT EXISTS generation (
@@ -52,7 +57,7 @@ CREATE TABLE IF NOT EXISTS password (
 	UNIQUE(config_id, str)
 );
 
-CREATE INDEX IF NOT EXISTS idx_password_checked ON password(checked);
+CREATE INDEX IF NOT EXISTS idx_password_checked ON password(checked, id);
 `
 
 var migrations = []string{
@@ -132,42 +137,60 @@ func ensureAppConfigExists(db *sql.DB) error {
 	return nil
 }
 
-// GetOrCreateConfig returns the config.id for the given mnemonic_hash, address, addressType.
-// If not present, it creates one.
-func GetOrCreateConfig(db *sql.DB, mnemonicHash, address, addressType string) (int, string, bool, error) {
+// Config represents a row in the config table
+type Config struct {
+	ID              int
+	MnemonicHash    string
+	FindAddress     string
+	FindAddressType string
+	AccountStart    int
+	AccountEnd      int
+	AddressStart    int
+	AddressEnd      int
+	FoundPassword   sql.NullString
+}
+
+// GetOrCreateConfig returns the Config for the given parameters.
+// If not present, it creates one. The second return value indicates if a password was found.
+func GetOrCreateConfig(db *sql.DB, mnemonicHash, address, addressType string, accountStart, accountEnd, addressStart, addressEnd int) (*Config, bool, error) {
 	mnemonicHash = strings.ToLower(mnemonicHash)
 	address = strings.ToLower(address)
 	addressType = strings.ToLower(addressType)
 
-	var id int
-	var foundPwd sql.NullString
+	config := &Config{
+		MnemonicHash:    mnemonicHash,
+		FindAddress:     address,
+		FindAddressType: addressType,
+		AccountStart:    accountStart,
+		AccountEnd:      accountEnd,
+		AddressStart:    addressStart,
+		AddressEnd:      addressEnd,
+	}
 
 	selectQuery := `
 		SELECT id, found_password
 		FROM config
-		WHERE mnemonic_hash = ? AND find_address = ? AND find_address_type = ?
+		WHERE mnemonic_hash = ? AND find_address = ? AND account_start = ? AND account_end = ? AND address_start = ? AND address_end = ?
 		LIMIT 1
 	`
-	err := db.QueryRow(selectQuery, mnemonicHash, address, addressType).Scan(&id, &foundPwd)
+	err := db.QueryRow(selectQuery, mnemonicHash, address, accountStart, accountEnd, addressStart, addressEnd).Scan(&config.ID, &config.FoundPassword)
 	if err == sql.ErrNoRows {
 		// Insert
 		res, err2 := db.Exec(`
-			INSERT INTO config (mnemonic_hash, find_address, find_address_type)
-			VALUES (?, ?, ?)
-		`, mnemonicHash, address, addressType)
+			INSERT INTO config (mnemonic_hash, find_address, find_address_type, account_start, account_end, address_start, address_end)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
+		`, mnemonicHash, address, addressType, accountStart, accountEnd, addressStart, addressEnd)
 		if err2 != nil {
-			return 0, "", false, fmt.Errorf("failed to insert config: %w", err2)
+			return nil, false, fmt.Errorf("failed to insert config: %w", err2)
 		}
 		newID, _ := res.LastInsertId()
-		return int(newID), "", false, nil
+		config.ID = int(newID)
+		return config, false, nil
 	} else if err != nil {
-		return 0, "", false, fmt.Errorf("failed to select config: %w", err)
+		return nil, false, fmt.Errorf("failed to select config: %w", err)
 	}
 
-	if foundPwd.Valid {
-		return id, foundPwd.String, true, nil
-	}
-	return id, "", false, nil
+	return config, config.FoundPassword.Valid, nil
 }
 
 // markConfigFoundPassword updates config.found_password for the given configID.
@@ -357,6 +380,10 @@ func pruneIfOverLimit(db *sql.DB) error {
 			break
 		}
 	}
+	_, err = db.Exec(`PRAGMA optimize`)
+	if err != nil {
+		return fmt.Errorf("failed to optimize: %w", err)
+	}
 	return nil
 }
 
@@ -453,4 +480,38 @@ func getConfigFoundPassword(db *sql.DB, configID int) (string, error) {
 type passwordRow struct {
 	ID  int
 	Str string
+}
+
+// ClearPasswords truncates the password table, optimizes, and vacuums the database.
+func ClearPasswords(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	// Truncate the password table.
+	if _, err := tx.Exec("DELETE FROM password"); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to delete from password table: %w", err)
+	}
+
+	// Reset the autoincrement counter.
+	if _, err := tx.Exec("DELETE FROM sqlite_sequence WHERE name='password'"); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to reset autoincrement: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	// Run optimize and vacuum outside the transaction
+	if _, err := db.Exec("PRAGMA optimize"); err != nil {
+		return fmt.Errorf("failed to optimize: %w", err)
+	}
+	if _, err := db.Exec("VACUUM"); err != nil {
+		return fmt.Errorf("failed to vacuum: %w", err)
+	}
+
+	return nil
 }

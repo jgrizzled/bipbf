@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestGenerateNextNStrings(t *testing.T) {
+func TestGenerateNextStrings(t *testing.T) {
 	tests := []struct {
 		name         string
 		current      string
@@ -76,6 +76,11 @@ func TestGenerateNextNStrings(t *testing.T) {
 				"length":  float64(tt.length),
 			}
 
+			strategy, err := NewStrategy(params)
+			if err != nil {
+				t.Fatalf("NewStrategy error: %v", err)
+			}
+
 			// Construct the progress map.  If there is no current string,
 			// the progress map should be empty.
 			progress := map[string]interface{}{}
@@ -84,7 +89,7 @@ func TestGenerateNextNStrings(t *testing.T) {
 			}
 
 			fmt.Printf("Test: %s\n", tt.name)
-			got, newProgress, err := GenerateNextStrings(params, progress, tt.n)
+			got, newProgress, err := strategy.GenerateNextStrings(progress, tt.n)
 
 			if tt.expectError {
 				if err == nil {
