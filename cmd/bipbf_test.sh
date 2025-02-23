@@ -9,55 +9,51 @@ BIPBF_BIN="${ORIGINAL_DIR}/bin/bipbf"
 TEMP_DIR=$(mktemp -d)
 cd "$TEMP_DIR" || exit 1
 
-# Set up environment variables
+# Set up common environment variables
 export BIPBF_MNEMONIC="swarm security emotion rent eagle meadow submit panic myself list occur siege popular famous hint soon jealous hidden safe primary build quiz sea define"
 export BIPBF_ADDRESS_TYPE=btc-bech32
-
-# exhaustive test
-export BIPBF_ADDRESS="bc1qcqucsq05l7yxeclrkz68d30d8xl6xr7swup9kl"
 export BIPBF_ACCOUNT_END=1
 export BIPBF_ADDRESS_END=1
-result=$("$BIPBF_BIN" --mode exhaustive --min-len 1 --max-len 2 | grep -i "found")
-if [[ $result != *"aa"* ]]; then
-    echo "Exhaustive test failed: want 'aa', got '$result'"
-    rm -rf "$TEMP_DIR"
-    exit 1
-fi
-rm -rf *db.sqlite*
 
-# pwlist test
+# Helper function to run a test case
+run_test() {
+    local test_name=$1
+    local expected=$2
+    local cmd=$3
+
+    rm -rf *db.sqlite*
+    result=$("$BIPBF_BIN" $cmd 2>&1 | tee /dev/tty | grep -i "Found password:")
+    if [[ $result != *"$expected"* ]]; then
+        echo "$test_name failed: want '$expected', got '$result'"
+        cleanup_and_exit 1
+    fi
+}
+
+# Helper function to cleanup and exit
+cleanup_and_exit() {
+    local exit_code=$1
+    rm -rf "$TEMP_DIR"
+    exit "$exit_code"
+}
+
+# Test cases
+# Exhaustive test
+export BIPBF_ADDRESS="bc1qcqucsq05l7yxeclrkz68d30d8xl6xr7swup9kl"
+run_test "Exhaustive" "aa" "--mode exhaustive --min-len 1 --max-len 2"
+
+# Pwlist test
 printf "bb\naa" > passwords.txt
-result=$("$BIPBF_BIN" --mode pwlist | grep -i "found")
-if [[ $result != *"aa"* ]]; then
-    echo "Pwlist test failed: want 'aa', got '$result'"
-    rm -rf "$TEMP_DIR"
-    exit 1
-fi
-rm -rf *db.sqlite*
+run_test "Pwlist" "aa" "--mode pwlist"
 
-# variation test
-result=$("$BIPBF_BIN" --mode variation --base "ab" --ops 1 | grep -i "found")
-if [[ $result != *"aa"* ]]; then
-    echo "Variation test failed: want 'aa', got '$result'"
-    rm -rf "$TEMP_DIR"
-    exit 1
-fi
-rm -rf *db.sqlite*
+# Variation test
+run_test "Variation" "aa" "--mode variation --base ab --ops 1"
 
-# wordlist test
+# Wordlist test
 export BIPBF_ADDRESS="bc1qh4yk4rzj40mqztff4uh7pf58pahd968t087sgl"
-export BIPBF_ACCOUNT_END=0
-export BIPBF_ADDRESS_END=0
 printf "b\na" > wordlist.txt
-result=$("$BIPBF_BIN" --mode wordlist --len 2 | grep -i "found")
-if [[ $result != *"ab"* ]]; then
-    echo "Wordlist test failed: want 'ab', got '$result'"
-    rm -rf "$TEMP_DIR"
-    exit 1
-fi
-rm -rf *db.sqlite*
+run_test "Wordlist" "ab" "--mode wordlist --len 2"
 
 echo "All tests passed"
-rm -rf "$TEMP_DIR"
+cleanup_and_exit 0
 
 

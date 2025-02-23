@@ -6,12 +6,10 @@ import (
 	"bipbf/strats/pwlist"
 	"bipbf/strats/variation"
 	"bipbf/strats/wordlist"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"runtime"
@@ -52,7 +50,6 @@ func main() {
 	var lenFlag int
 	flag.IntVar(&lenFlag, "len", 0, "Length of passwords to brute force")
 
-	// Add minLen and maxLen flags for exhaustive mode
 	var minLenFlag int
 	flag.IntVar(&minLenFlag, "min-len", 1, "Minimum length of passwords to brute force (for exhaustive mode)")
 	var maxLenFlag int
@@ -97,7 +94,6 @@ func main() {
 	var discordWebhookURLFlag string
 	flag.StringVar(&discordWebhookURLFlag, "discord-url", "", "Discord webhook URL")
 
-	// Add clear-pws flag
 	var clearPwsFlag bool
 	flag.BoolVar(&clearPwsFlag, "clear-pws", false, "Clear the cached passwords and reclaim disk space")
 
@@ -171,6 +167,7 @@ func main() {
 			finalWorkers = 1
 		}
 	}
+
 	// Connect DB
 	db, err := bipbf.InitDB(dbPathFlag)
 	if err != nil {
@@ -273,48 +270,55 @@ func main() {
 			}
 		}
 
-		// Hash the password file
-		pwFileHash, err := hashFile(pwFileFlag)
+		// Load passwords from file
+		passwords, err := loadUniqueLines(pwFileFlag, nil)
 		if err != nil {
-			log.Fatalf("Error hashing password file: %v", err)
+			log.Fatalf("Failed to load passwords: %v", err)
+		}
+
+		// Convert passwords to []interface{}
+		var pwlistInterface []interface{}
+		for _, pw := range passwords {
+			pwlistInterface = append(pwlistInterface, pw)
 		}
 
 		params := map[string]interface{}{
-			"pwfile": pwFileFlag,
-			"hash":   pwFileHash, // Add the hash to the params
+			"pwlist": pwlistInterface,
 		}
 		strategy, err := pwlist.NewStrategy(params)
 		if err != nil {
 			log.Fatalf("Error creating pwlist strategy: %v", err)
 		}
-		log.Printf("Running pwlist mode with password file %s", pwFileFlag)
+		log.Printf("Running pwlist mode with %d passwords from %s", len(passwords), pwFileFlag)
 		if !runStrategyForParams(db, config, 2, params, strategy, mnemonicFlag, runtimeArgs, bot) {
 			return
 		}
 
 	case "variation":
-		basePasswords := []string{}
+		var basePasswords []string
 
-		// Check if basePasswordFlag is set.  If not, try to read from passwords.txt
+		// First check if basePasswordFlag is set
 		if basePasswordFlag != "" {
-			basePasswords = append(basePasswords, basePasswordFlag)
+			basePasswords = []string{basePasswordFlag}
 		} else {
-			if _, err := os.Stat("passwords.txt"); err == nil {
-				passwordBytes, err := os.ReadFile("passwords.txt")
-				if err != nil {
-					log.Fatalf("Failed to read passwords.txt: %v", err)
+			// Try to read from pwfile or passwords.txt
+			pwFile := pwFileFlag
+			if pwFile == "" {
+				// Check if passwords.txt exists as fallback
+				if _, err := os.Stat("passwords.txt"); err == nil {
+					pwFile = "passwords.txt"
+				} else {
+					log.Fatalf("Must specify --base, --pwfile, or provide a passwords.txt file for variation mode")
 				}
-				passwordLines := strings.Split(string(passwordBytes), "\n")
-				for _, line := range passwordLines {
-					trimmedLine := strings.TrimSpace(line)
-					if trimmedLine != "" {
-						basePasswords = append(basePasswords, trimmedLine)
-					}
-				}
-			} else {
-				log.Fatalf("Must specify --base or provide a passwords.txt file for variation mode")
+			}
+
+			var err error
+			basePasswords, err = loadUniqueLines(pwFile, nil)
+			if err != nil {
+				log.Fatalf("Failed to load passwords: %v", err)
 			}
 		}
+
 		log.Printf("Running variation mode with %d base passwords", len(basePasswords))
 		// Iterate through base passwords
 		for _, basePassword := range basePasswords {
@@ -354,23 +358,10 @@ func main() {
 		}
 
 		// Read in the wordlist from file
-		wordlistBytes, err := os.ReadFile(wordlistFileFlag)
+		words, err := loadUniqueLines(wordlistFileFlag, strings.ToLower)
 		if err != nil {
-			log.Fatalf("Failed to read wordlist file: %v", err)
+			log.Fatalf("Failed to load wordlist: %v", err)
 		}
-		wordlistLines := strings.Split(string(wordlistBytes), "\n")
-
-		// Trim whitespace and lowercase, and remove empty lines
-		var words []string
-		for _, line := range wordlistLines {
-			trimmed := strings.TrimSpace(line)
-			if trimmed != "" {
-				words = append(words, strings.ToLower(trimmed))
-			}
-		}
-
-		// Sort the words alphabetically
-		sort.Strings(words)
 
 		var wordsInterface []interface{}
 		for _, word := range words {
@@ -401,6 +392,13 @@ func main() {
 	default:
 		log.Fatalf("Unknown mode: %s. Supported modes are 'exhaustive', 'pwlist', 'variation', and 'wordlist'.", modeFlag)
 	}
+	logMsg := "Password not found with these parameters."
+	log.Print(logMsg)
+	if bot != nil {
+		if err := bot.SendMessage(logMsg); err != nil {
+			log.Printf("Error sending Discord message: %v", err)
+		}
+	}
 }
 
 // runStrategyForParams executes a strategy and returns true if the password was NOT found
@@ -413,7 +411,7 @@ func runStrategyForParams(db *sql.DB, config *bipbf.Config, genType int, params 
 		log.Fatalf("GetOrCreateGeneration error: %v", err)
 	}
 	if gen.Done == 1 {
-		log.Printf("Generation is already done. Possibly from a prior run.")
+		log.Printf("Generation already completed in a prior run.")
 		return true // Indicate password not found (generation already done)
 	}
 
@@ -432,11 +430,11 @@ func runStrategyForParams(db *sql.DB, config *bipbf.Config, genType int, params 
 
 	// Check final result
 	if foundPwd != "" {
-		fmt.Printf("Found password: %s\n", foundPwd)
+		logMsg := fmt.Sprintf("Found password: %s", foundPwd)
+		log.Print(logMsg)
 
 		if discordBot != nil {
-			message := fmt.Sprintf("Password found: %s", foundPwd)
-			if err := discordBot.SendMessage(message); err != nil {
+			if err := discordBot.SendMessage(logMsg); err != nil {
 				log.Printf("Error sending Discord message: %v", err)
 			}
 		}
@@ -448,7 +446,6 @@ func runStrategyForParams(db *sql.DB, config *bipbf.Config, genType int, params 
 
 		return false // Indicate password *was* found
 	} else {
-		fmt.Println("Password not found with these parameters.")
 		return true // Indicate password not found
 	}
 }
@@ -490,26 +487,50 @@ func loadCharset(input string) string {
 		finalCharset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{}\\|;:'\",.<>/?`~ "
 	}
 
-	// Sort runes to have a deterministic order.
-	runes := []rune(finalCharset)
-	sort.Slice(runes, func(i, j int) bool {
-		return runes[i] < runes[j]
+	// Remove duplicates
+	seen := make(map[rune]bool)
+	var unique []rune
+	for _, r := range finalCharset {
+		if !seen[r] {
+			seen[r] = true
+			unique = append(unique, r)
+		}
+	}
+
+	// Sort runes to have a deterministic order
+	sort.Slice(unique, func(i, j int) bool {
+		return unique[i] < unique[j]
 	})
-	return string(runes)
+	return string(unique)
 }
 
-// hashFile calculates the SHA256 hash of a file.
-func hashFile(filePath string) (string, error) {
-	file, err := os.Open(filePath)
+// loadUniqueLines reads lines from a file, trims whitespace, removes empty lines and duplicates
+func loadUniqueLines(filePath string, transform func(string) string) ([]string, error) {
+	// Read file
+	fileBytes, err := os.ReadFile(filePath)
 	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-
-	hasher := sha256.New()
-	if _, err := io.Copy(hasher, file); err != nil {
-		return "", err
+		return nil, fmt.Errorf("failed to read file %s: %v", filePath, err)
 	}
 
-	return fmt.Sprintf("%x", hasher.Sum(nil)), nil
+	// Use map to track unique lines
+	uniqueLines := make(map[string]bool)
+	
+	// Process each line
+	for _, line := range strings.Split(string(fileBytes), "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			if transform != nil {
+				trimmed = transform(trimmed)
+			}
+			uniqueLines[trimmed] = true
+		}
+	}
+
+	// Convert map keys to sorted slice
+	var lines []string
+	for line := range uniqueLines {
+		lines = append(lines, line)
+	}
+	sort.Strings(lines)
+
+	return lines, nil
 }

@@ -1,24 +1,34 @@
 package pwlist
 
 import (
-	"bufio"
 	"errors"
-	"os"
 )
 
 type PWListStrategy struct {
-	pwFilePath   string
+	passwords    []string
 	totalStrings int64
 }
 
 func NewStrategy(params map[string]interface{}) (*PWListStrategy, error) {
-	pwFilePath, ok := params["pwfile"].(string)
+	// Get passwords from params
+	pwlistInterface, ok := params["pwlist"].([]interface{})
 	if !ok {
-		return nil, errors.New("NewPWListStrategy: pwfile parameter is missing or not a string")
+		return nil, errors.New("NewPWListStrategy: pwlist parameter is missing or not a []interface{}")
+	}
+
+	// Convert []interface{} to []string
+	passwords := make([]string, len(pwlistInterface))
+	for i, pw := range pwlistInterface {
+		str, ok := pw.(string)
+		if !ok {
+			return nil, errors.New("NewPWListStrategy: password list contains non-string value")
+		}
+		passwords[i] = str
 	}
 
 	s := &PWListStrategy{
-		pwFilePath: pwFilePath,
+		passwords:    passwords,
+		totalStrings: int64(len(passwords)),
 	}
 	return s, nil
 }
@@ -31,70 +41,29 @@ func (s *PWListStrategy) GenerateNextStrings(progress map[string]interface{}, n 
 		startIndex = int(lastIndex) + 1
 	}
 
-	// Open and read the password file
-	file, err := os.Open(s.pwFilePath)
-	if err != nil {
-		return nil, nil, errors.New("generateNextStrings: failed to open password file: " + err.Error())
-	}
-	defer file.Close()
-
-	// Skip to the starting index
-	scanner := bufio.NewScanner(file)
-	currentIndex := 0
-	for currentIndex < startIndex && scanner.Scan() {
-		currentIndex++
+	// If we're past the end of the list, return empty
+	if startIndex >= len(s.passwords) {
+		return []string{}, map[string]interface{}{"last_index": float64(len(s.passwords) - 1)}, nil
 	}
 
-	if err := scanner.Err(); err != nil {
-		return nil, nil, errors.New("generateNextStrings: error reading password file: " + err.Error())
+	// Calculate end index
+	endIndex := startIndex + n
+	if endIndex > len(s.passwords) {
+		endIndex = len(s.passwords)
 	}
 
-	// Extract the next n passwords
-	results := make([]string, 0, n)
-	for len(results) < n && scanner.Scan() {
-		results = append(results, scanner.Text())
-		currentIndex++
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, nil, errors.New("generateNextStrings: error reading password file: " + err.Error())
-	}
-
-	// If we got no results and we're not at the start, we've reached the end
-	if len(results) == 0 && startIndex > 0 {
-		return []string{}, map[string]interface{}{"last_index": float64(currentIndex - 1)}, nil
-	}
+	// Extract the passwords
+	results := s.passwords[startIndex:endIndex]
 
 	// Update progress with last index
 	newProgress := map[string]interface{}{
-		"last_index": float64(currentIndex - 1),
+		"last_index": float64(endIndex - 1),
 	}
 
 	return results, newProgress, nil
 }
 
-// GetTotalStrings returns the total number of passwords in the file
+// GetTotalStrings returns the total number of passwords
 func (s *PWListStrategy) GetTotalStrings() (int64, error) {
-	if s.totalStrings != 0 {
-		return s.totalStrings, nil
-	}
-
-	file, err := os.Open(s.pwFilePath)
-	if err != nil {
-		return 0, errors.New("calcTotalStrings: failed to open password file: " + err.Error())
-	}
-	defer file.Close()
-
-	lineCount := int64(0)
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		lineCount++
-	}
-
-	if err := scanner.Err(); err != nil {
-		return 0, errors.New("calcTotalStrings: error reading password file: " + err.Error())
-	}
-
-	s.totalStrings = lineCount
-	return lineCount, nil
+	return s.totalStrings, nil
 }
