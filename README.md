@@ -1,6 +1,6 @@
 # bipbf
 
-**bipbf** is a brute force password-guessing tool for recovering BIP39 (mnemonic phrase) wallets (ex created by Trezor or Ledger hardware wallets) where you have the seed phrase and a known address but lost the password (aka 25th word). It supports multiple modes of brute force, including exhaustive, password list, variation, and wordlist modes.
+**bipbf** is a brute force password-guessing tool for recovering BIP39 (mnemonic phrase) wallets (like created by Trezor or Ledger hardware wallets) where you have the seed phrase and a known address but lost the password (aka 25th word). It supports multiple modes of brute force, including exhaustive, password list, variation, and wordlist modes. Brute force runs can be interrupted and resumed.
 
 BIP39 wallets are designed to be slow to brute force (performing 2048 rounds of SHA512 hashing on the mnemonic + password to derive the master private key). Thus, performing an exhaustive brute force (IE trying all possible combinations of characters from a charset) is not recommended. For password lengths > 7 characters, an exhaustive search is likely to take months, if not years, to complete.
 
@@ -31,6 +31,8 @@ Use the provided Makefile to build the binary:
 make build
 ```
 
+The executable will be in the `bin` directory.
+
 ## Configuration
 
 You can configure bipbf using environment variables, a .env file, or command line flags. Configuration options in order of precedence:
@@ -59,14 +61,14 @@ You must know the account and address indices to use, or specify a range to sear
 
 If not specified, the account and address indices default to 0. You can specify a range of accounts and addresses to search. For example, to check the first 2 accounts and the first 10 addresses of each account, set `--account-start 0` and `--account-end 1` and `--address-start 0` and `--address-end 9`. Note, searching for multiple addresses will slow down the brute force significantly.
 
-### Required Configuration
+### Wallet Configuration
 
 #### CLI flags:
 
 ```
 --mnemonic "your mnemonic phrase"
 --address your_address
---address-type btc-bech32 # or eth
+--address-type btc-bech32
 --account-start 0 # Optional
 --account-end 0 # Optional
 --address-start 0 # Optional
@@ -76,10 +78,9 @@ If not specified, the account and address indices default to 0. You can specify 
 #### Environment variables:
 
 ```bash
-# Required settings - set via environment variables:
 export BIPBF_MNEMONIC="your mnemonic phrase"
 export BIPBF_ADDRESS=your_address
-export BIPBF_ADDRESS_TYPE=btc-bech32 # or eth
+export BIPBF_ADDRESS_TYPE=btc-bech32
 export BIPBF_ACCOUNT_START=0 # Optional
 export BIPBF_ACCOUNT_END=0 # Optional
 export BIPBF_ADDRESS_START=0 # Optional
@@ -98,37 +99,38 @@ BIPBF_ADDRESS_START=0
 BIPBF_ADDRESS_END=0
 ```
 
-### Optional env vars:
-
-```
-BIPBF_DISCORD_URL="your discord webhook url" # For notifications
-BIPBF_CHARSET="abcdef123..." # Custom charset for exhaustive/variation modes
-```
-
 ### Optional Flags
 
 - `--db-path`: Path to SQLite database file (default: "db.sqlite")
 - `--db-size`: Max database size in GB (default: 10gb), setting saved between runs
-- `--workers`: Number of worker goroutines (default: CPU cores - 1)
+- `--workers`: Number of worker threads (default: CPU cores - 1)
 - `--batch-size`: Passwords per batch (default: 10000)
 - `--clear-pws`: Clear cached passwords and reclaim disk space
 - `--help`: Show help
 
 ## Usage Modes
 
+Specify the brute force mode with `--mode` flag.
+
+If you provide the same params and address configuration as a previous run, the brute force will resume from saved progress. If a run has completed, the program will exit. If a password is found, it will print it to the console and exit. To stop the program, press Ctrl+C.
+
 ### 1. Exhaustive Mode
 
 Tries all possible combinations of characters from a charset up to specified length.
 
+Loads charset from `--charset "my charset"`, BIPBF_CHARSET environment variable, or charset.txt in the current directory.
+
+Default is `` abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{}\\|;:'\",.<>/?` ~``
+
 ```bash
 # Try all passwords of length 4
-./bipbf --mode exhaustive --len 4
+bin/bipbf --mode exhaustive --len 4
 
-# Try passwords from length 1-8
-./bipbf --mode exhaustive --min-len 1 --max-len 8
+# Try passwords from length 1-6
+bin/bipbf --mode exhaustive --min-len 1 --max-len 6
 
 # With custom charset
-./bipbf --mode exhaustive --len 4 --charset "abc123"
+bin/bipbf --mode exhaustive --len 4 --charset "abc123"
 ```
 
 ### 2. Password List Mode
@@ -136,11 +138,11 @@ Tries all possible combinations of characters from a charset up to specified len
 Tests passwords from a file.
 
 ```bash
-# Using passwords.txt in current directory
-./bipbf --mode pwlist
+# Using passwords.txt (one per line) in current directory
+bin/bipbf --mode pwlist
 
 # Using custom password file
-./bipbf --mode pwlist --pwfile /path/to/passwords.txt
+bin/bipbf --mode pwlist --pwfile /path/to/passwords.txt
 ```
 
 ### 3. Variation Mode
@@ -151,10 +153,10 @@ Specify the number of operations to try with `--ops`.
 
 ```bash
 # Try all 2-character variations a single password
-./bipbf --mode variation --base "password123" --ops 2
+bin/bipbf --mode variation --base "password123" --ops 2
 
 # Try all variations of multiple passwords from passwords.txt
-./bipbf --mode variation --ops 2
+bin/bipbf --mode variation --ops 2
 ```
 
 ### 4. Wordlist Mode
@@ -162,19 +164,19 @@ Specify the number of operations to try with `--ops`.
 Combines words from a wordlist to create password combinations.
 
 ```bash
-# Using wordlist.txt, combining 2 words
-./bipbf --mode wordlist --len 2
+# Using wordlist.txt (one word per line), combining 2 words
+bin/bipbf --mode wordlist --len 2
 
 # With custom separator
-./bipbf --mode wordlist --len 2 --separator "-"
+bin/bipbf --mode wordlist --len 2 --separator "-"
 
 # Using custom wordlist file
-./bipbf --mode wordlist --len 2 --wordlist-file /path/to/wordlist.txt
+bin/bipbf --mode wordlist --len 2 --wordlist-file /path/to/wordlist.txt
 ```
 
 ## Discord Notifications
 
-To receive progress updates and success notifications via Discord:
+To receive progress updates (once per 24h) and success notifications via Discord:
 
 1. Create a Discord webhook URL in your server
 2. Set it via environment variable or .env file:
