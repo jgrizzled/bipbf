@@ -509,7 +509,7 @@ func loadUniqueLines(filePath string, transform func(string) string) ([]string, 
 
 	// Use map to track unique lines
 	uniqueLines := make(map[string]bool)
-	
+
 	// Process each line
 	for _, line := range strings.Split(string(fileBytes), "\n") {
 		if trimmed := strings.TrimSpace(line); trimmed != "" {

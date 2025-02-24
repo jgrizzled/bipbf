@@ -162,7 +162,7 @@ func generator(
 			GenID:          genRow.ID,
 			Progress:       string(progressJSON),
 			GeneratedCount: genRow.GeneratedCount,
-			ElapsedMs:     genRow.ElapsedMs,
+			ElapsedMs:      genRow.ElapsedMs,
 		}
 		writeChan <- updateOp
 

@@ -47,7 +47,7 @@ func writer(db *sql.DB, writeChan <-chan WriteOp, stopChan <-chan struct{}) {
 		select {
 		case <-stopChan:
 			return
-			
+
 		case op, ok := <-writeChan:
 			if !ok {
 				return

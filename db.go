@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -311,21 +312,20 @@ func markPasswordsChecked(db *sql.DB, ids []int) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	// Build placeholder
-	placeholders := make([]string, len(ids))
-	args := make([]interface{}, len(ids))
-	for i, id := range ids {
-		placeholders[i] = "?"
-		args[i] = id
-	}
-	qMarks := strings.Join(placeholders, ",")
-	query := fmt.Sprintf(`
-		UPDATE password
-		SET checked = 1
-		WHERE id IN (%s)
-	`, qMarks)
 
-	_, err := db.Exec(query, args...)
+	// Convert ids to strings and join with commas
+	idStrs := make([]string, len(ids))
+	for i, id := range ids {
+		idStrs[i] = strconv.Itoa(id)
+	}
+	idList := strings.Join(idStrs, ",")
+
+	query := fmt.Sprintf(`
+		UPDATE password 
+		SET checked = 1
+		WHERE id IN (%s)`, idList)
+
+	_, err := db.Exec(query)
 
 	// Prune if needed.
 	if err := pruneIfOverLimit(db); err != nil {

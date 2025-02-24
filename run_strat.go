@@ -49,7 +49,7 @@ func RunStrategy(
 	stopChan := make(chan struct{})
 	stopReader := make(chan struct{})
 
-	writeChan := make(chan WriteOp, runtimeArgs.NumWorkers*2)  // Buffer for write operations
+	writeChan := make(chan WriteOp, runtimeArgs.NumWorkers*2) // Buffer for write operations
 
 	// aggregator
 	wg.Add(1)
@@ -104,7 +104,7 @@ func RunStrategy(
 	}
 
 	close(stopChan)
-	close(writeChan) 
+	close(writeChan)
 
 	// Drain channels to ensure no goroutine is blocked writing
 	go func() {
