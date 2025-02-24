@@ -97,6 +97,9 @@ func main() {
 	var clearPwsFlag bool
 	flag.BoolVar(&clearPwsFlag, "clear-pws", false, "Clear the cached passwords and reclaim disk space")
 
+	var resetProgressFlag bool
+	flag.BoolVar(&resetProgressFlag, "reset-progress", false, "Reset progress for this run (deletes the generation record)")
+
 	flag.Parse()
 
 	// Load mnemonic, address, and addressType in order of precedence:
@@ -248,14 +251,8 @@ func main() {
 			if err != nil {
 				log.Fatalf("Error creating exhaustive strategy: %v", err)
 			}
-			logMsg := fmt.Sprintf("Running exhaustive mode with length %d", currentLen)
-			log.Print(logMsg)
-			if bot != nil {
-				if err := bot.SendMessage(logMsg); err != nil {
-					log.Printf("Error sending Discord message: %v", err)
-				}
-			}
-			if !runStrategyForParams(db, config, 1, params, strategy, mnemonicFlag, runtimeArgs, bot) {
+			log.Printf("Running exhaustive mode with length %d", currentLen)
+			if !runStrategyForParams(db, config, 1, params, strategy, mnemonicFlag, runtimeArgs, bot, resetProgressFlag) {
 				return // Exit if password found
 			}
 		}
@@ -290,7 +287,7 @@ func main() {
 			log.Fatalf("Error creating pwlist strategy: %v", err)
 		}
 		log.Printf("Running pwlist mode with %d passwords from %s", len(passwords), pwFileFlag)
-		if !runStrategyForParams(db, config, 2, params, strategy, mnemonicFlag, runtimeArgs, bot) {
+		if !runStrategyForParams(db, config, 2, params, strategy, mnemonicFlag, runtimeArgs, bot, resetProgressFlag) {
 			return
 		}
 
@@ -335,14 +332,8 @@ func main() {
 			if len(basePassword) < displayLen {
 				displayLen = len(basePassword)
 			}
-			logMsg := fmt.Sprintf("Running variation mode with base password %s***", basePassword[:displayLen])
-			log.Print(logMsg)
-			if bot != nil {
-				if err := bot.SendMessage(logMsg); err != nil {
-					log.Printf("Error sending Discord message: %v", err)
-				}
-			}
-			if !runStrategyForParams(db, config, 3, params, strategy, mnemonicFlag, runtimeArgs, bot) {
+			log.Printf("Running variation mode with base password %s***", basePassword[:displayLen])
+			if !runStrategyForParams(db, config, 3, params, strategy, mnemonicFlag, runtimeArgs, bot, resetProgressFlag) {
 				return
 			}
 		}
@@ -378,14 +369,8 @@ func main() {
 		if err != nil {
 			log.Fatalf("Error creating wordlist strategy: %v", err)
 		}
-		logMsg := fmt.Sprintf("Running wordlist mode with %d words, length %d, and separator %s", len(words), lenFlag, wordlistSeparatorFlag)
-		log.Print(logMsg)
-		if bot != nil {
-			if err := bot.SendMessage(logMsg); err != nil {
-				log.Printf("Error sending Discord message: %v", err)
-			}
-		}
-		if !runStrategyForParams(db, config, 4, params, strategy, mnemonicFlag, runtimeArgs, bot) {
+		log.Printf("Running wordlist mode with %d words, length %d, and separator %s", len(words), lenFlag, wordlistSeparatorFlag)
+		if !runStrategyForParams(db, config, 4, params, strategy, mnemonicFlag, runtimeArgs, bot, resetProgressFlag) {
 			return
 		}
 
@@ -402,13 +387,23 @@ func main() {
 }
 
 // runStrategyForParams executes a strategy and returns true if the password was NOT found
-func runStrategyForParams(db *sql.DB, config *bipbf.Config, genType int, params map[string]interface{}, strategy bipbf.Strategy, mnemonicFlag string, runtimeArgs bipbf.RuntimeArgs, discordBot *bipbf.DiscordBot) bool {
+func runStrategyForParams(db *sql.DB, config *bipbf.Config, genType int, params map[string]interface{}, strategy bipbf.Strategy, mnemonicFlag string, runtimeArgs bipbf.RuntimeArgs, discordBot *bipbf.DiscordBot, resetProgress bool) bool {
 	// Convert params to JSON bytes
 	paramsBytes, _ := json.Marshal(params)
 
 	gen, err := bipbf.GetOrCreateGeneration(db, config.ID, genType, string(paramsBytes))
 	if err != nil {
 		log.Fatalf("GetOrCreateGeneration error: %v", err)
+	}
+	if resetProgress {
+		if err := bipbf.DeleteGeneration(db, gen.ID); err != nil {
+			log.Fatalf("Failed to delete generation: %v", err)
+		}
+		// Get a fresh generation
+		gen, err = bipbf.GetOrCreateGeneration(db, config.ID, genType, string(paramsBytes))
+		if err != nil {
+			log.Fatalf("GetOrCreateGeneration error after reset: %v", err)
+		}
 	}
 	if gen.Done == 1 {
 		log.Printf("Generation already completed in a prior run.")

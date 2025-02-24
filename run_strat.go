@@ -49,11 +49,13 @@ func RunStrategy(
 	stopChan := make(chan struct{})
 	stopReader := make(chan struct{})
 
+	writeChan := make(chan WriteOp, runtimeArgs.NumWorkers*2)  // Buffer for write operations
+
 	// aggregator
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		aggregator(db, resultChan, foundCh, stopChan)
+		aggregator(resultChan, foundCh, writeChan, stopChan)
 	}()
 
 	// spawn workers
@@ -78,13 +80,20 @@ func RunStrategy(
 		reader(db, runtimeArgs.BatchSize, batchChan, stopReader)
 	}()
 
+	// Add writer goroutine
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		writer(db, writeChan, stopChan)
+	}()
+
 	// generator
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		defer close(stopReader) // Signal stopReader when generator finishes
-		generator(db, config.ID, gen, runtimeArgs, strategy, stopChan, discordBot)
-		time.Sleep(2 * time.Second) // Give reader a chance to read last batch
+		defer close(stopReader)
+		generator(db, config.ID, gen, runtimeArgs, strategy, stopChan, writeChan, discordBot)
+		time.Sleep(2 * time.Second)
 	}()
 
 	// Now wait for either a found password or aggregator exit
@@ -95,6 +104,7 @@ func RunStrategy(
 	}
 
 	close(stopChan)
+	close(writeChan) 
 
 	// Drain channels to ensure no goroutine is blocked writing
 	go func() {

@@ -1,16 +1,11 @@
 package bipbf
 
-import (
-	"database/sql"
-	"log"
-)
-
 // aggregator collects results from the workers, marks rows as checked=1, and
 // signals if a password is found.
 func aggregator(
-	db *sql.DB,
 	resultChan <-chan workerResult,
 	foundCh chan<- string,
+	writeChan chan<- WriteOp,
 	stopChan <-chan struct{},
 ) {
 	defer close(foundCh)
@@ -34,12 +29,11 @@ func aggregator(
 				return
 			}
 
-			// Mark these row IDs as checked=1
 			if len(res.rowIDs) > 0 {
-				err := markPasswordsChecked(db, res.rowIDs)
-				if err != nil {
-					log.Printf("runAggregator: Error marking passwords checked: %v", err)
+				writeOp := MarkCheckedOp{
+					RowIDs: res.rowIDs,
 				}
+				writeChan <- writeOp
 			}
 
 			// Check if found

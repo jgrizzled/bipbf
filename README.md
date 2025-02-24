@@ -106,6 +106,7 @@ BIPBF_ADDRESS_END=0
 - `--workers`: Number of worker threads (default: CPU cores - 1)
 - `--batch-size`: Passwords per batch (default: 10000)
 - `--clear-pws`: Clear cached passwords and reclaim disk space
+- `--reset-progress`: Reset progress for this run
 - `--help`: Show help
 
 ## Usage Modes

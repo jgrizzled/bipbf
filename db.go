@@ -515,3 +515,12 @@ func ClearPasswords(db *sql.DB) error {
 
 	return nil
 }
+
+// DeleteGeneration deletes a generation record by ID.
+func DeleteGeneration(db *sql.DB, generationID int) error {
+	_, err := db.Exec(`DELETE FROM generation WHERE id = ?`, generationID)
+	if err != nil {
+		return fmt.Errorf("failed to delete generation: %w", err)
+	}
+	return nil
+}

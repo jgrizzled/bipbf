@@ -24,6 +24,7 @@ func generator(
 	runtimeArgs RuntimeArgs,
 	strategy Strategy,
 	stopChan <-chan struct{},
+	writeChan chan<- WriteOp,
 	bot *DiscordBot,
 ) {
 
@@ -36,7 +37,7 @@ func generator(
 	if genRow.TotalCount == 0 {
 		tp, err := strategy.GetTotalStrings()
 		if err != nil {
-			log.Fatalf("RunGenerator: error calculating total count: %v", err)
+			log.Printf("RunGenerator: error calculating total count: %v", err)
 			return
 		}
 
@@ -117,7 +118,7 @@ func generator(
 		// Generate the next batch of password strings
 		strs, newProgress, err := strategy.GenerateNextStrings(progress, runtimeArgs.BatchSize)
 		if err != nil {
-			log.Fatalf("RunGenerator: error generating next strings: %v", err)
+			log.Printf("RunGenerator: error generating next strings: %v", err)
 			return
 		}
 		n := int64(len(strs))
@@ -138,12 +139,11 @@ func generator(
 			}
 		}
 
-		// Insert the deduplicated batch into the DB (ignoring duplicates).
-		err = insertPasswords(db, configID, uniqueStrs)
-		if err != nil {
-			log.Printf("RunGenerator: error inserting passwords: %v", err)
-			return
+		writeOp := InsertPasswordsOp{
+			ConfigID: configID,
+			Strings:  uniqueStrs,
 		}
+		writeChan <- writeOp
 
 		progressJSON, err := json.Marshal(newProgress)
 		if err != nil {
@@ -153,15 +153,18 @@ func generator(
 
 		iterationElapsed := time.Since(iterationStart).Milliseconds()
 		genRow.ElapsedMs += iterationElapsed
-		iterationStart = time.Now() // Reset the iteration timer
+		iterationStart = time.Now()
 
 		genRow.GeneratedCount += n
 
-		err = updateGenerationProgress(db, genRow.ID, string(progressJSON), genRow.GeneratedCount, genRow.ElapsedMs)
-		if err != nil {
-			log.Printf("RunGenerator: error updating generation progress: %v", err)
-			return
+		// Replace direct DB update with write operation
+		updateOp := UpdateGenerationOp{
+			GenID:          genRow.ID,
+			Progress:       string(progressJSON),
+			GeneratedCount: genRow.GeneratedCount,
+			ElapsedMs:     genRow.ElapsedMs,
 		}
+		writeChan <- updateOp
 
 		generatedThisRun += n
 		progress = newProgress // Update progress for the next iteration
@@ -170,11 +173,4 @@ func generator(
 	log.Printf("Generation complete: total generated: %d passwords. Time elapsed: %v", genRow.GeneratedCount, time.Since(startTime))
 	// Mark generation done
 	updateGenerationDone(db, genRow.ID)
-
-	if bot != nil {
-		message := fmt.Sprintf("Finished generation %d for config %d", genRow.ID, configID)
-		if err := bot.SendMessage(message); err != nil {
-			log.Printf("Error sending Discord message: %v", err)
-		}
-	}
 }
