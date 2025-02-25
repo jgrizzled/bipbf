@@ -152,10 +152,11 @@ func generator(
 		// Calculate elapsed time
 		now := time.Now()
 		elapsedMs += int64(now.Sub(lastUpdateTime).Milliseconds())
+		genRow.ElapsedMs += elapsedMs
 		lastUpdateTime = now
 		
 		// Update the database with new count and time
-		if err := updateGenerationCountAndTime(db, genRow.ID, genRow.GeneratedCount, elapsedMs); err != nil {
+		if err := updateGenerationCountAndTime(db, genRow.ID, genRow.GeneratedCount, genRow.ElapsedMs); err != nil {
 			log.Printf("Error updating generation count and time: %v", err)
 		}
 

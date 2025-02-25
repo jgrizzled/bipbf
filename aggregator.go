@@ -52,14 +52,21 @@ func aggregator(
 				if runtimeArgs.MaxCacheLen > 0 && cache.Len() > runtimeArgs.MaxCacheLen {
 					// Track how many items we need to remove
 					toRemove := cache.Len() - runtimeArgs.MaxCacheLen + len(res.passwords)
-					removed := 0
+					log.Printf("Aggregator: cache %d > %d, removing %d items", cache.Len(), runtimeArgs.MaxCacheLen, toRemove)
 					
-					// Use Range to delete oldest entries until we're under the limit
+					// Collect keys to delete
+					keysToDelete := make([]string, 0, toRemove)
+					
+					// Use Range to collect keys to delete
 					cache.Range(func(key string, value interface{}) bool {
-						cache.Delete(key)
-						removed++
-						return removed < toRemove // continue until we've removed enough
+						keysToDelete = append(keysToDelete, key)
+						return len(keysToDelete) < toRemove // continue until we've collected enough
 					})
+					
+					// Delete the collected keys
+					for _, key := range keysToDelete {
+						cache.Delete(key)
+					}
 				}
 				
 				// Now add the new passwords to cache
