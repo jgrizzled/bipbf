@@ -101,7 +101,7 @@ BIPBF_ADDRESS_END=0
 
 - `--db-path`: Path to SQLite database file (default: "db.sqlite")
 - `--workers`: Number of worker threads (default: CPU cores - 1)
-- `--batch-size`: Passwords per batch (default: 10000)
+- `--batch-size`: Passwords per batch (default: 100000)
 - `--cache-size`: Maximum cache size in GB (default: 1gb)
 - `--reset-progress`: Reset progress for this run
 - `--help`: Show help

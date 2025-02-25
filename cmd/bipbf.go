@@ -57,7 +57,7 @@ func main() {
 	flag.IntVar(&workersFlag, "workers", 0, "Number of worker goroutines (default is numCPU - 1)")
 
 	var batchSizeFlag int
-	flag.IntVar(&batchSizeFlag, "batch-size", 10000, "Number of passwords per batch")
+	flag.IntVar(&batchSizeFlag, "batch-size", 100000, "Number of passwords per batch")
 
 	var cacheSizeGBFlag float64
 	flag.Float64Var(&cacheSizeGBFlag, "cache-size", 1.0, "Maximum cache size in GB (default 1 GB)")

@@ -3,7 +3,6 @@ package bipbf
 import (
 	"log"
 	"strings"
-	"time"
 )
 
 type workerResult struct {
@@ -27,15 +26,7 @@ func worker(
 	resultChan chan<- workerResult,
 	stopChan <-chan struct{},
 ) {
-	const waitThreshold = 10 * time.Millisecond // Threshold for logging if waited too long
-	const logAfterCount = 10                    // Number of waits before logging
-
-	var batchWaitCount int
-	var resultWaitCount int
-
 	for {
-		// Measure wait time when receiving from batchChan
-		startBatch := time.Now()
 		var batch batchItem
 		var ok bool
 		select {
@@ -44,34 +35,17 @@ func worker(
 		case batch, ok = <-batchChan:
 			// received batch, continue processing
 		}
-		elapsedBatch := time.Since(startBatch)
-		if elapsedBatch > waitThreshold {
-			batchWaitCount++
-			if batchWaitCount >= logAfterCount {
-				log.Printf("runWorker: waited >%v for batchChan %d times", waitThreshold, batchWaitCount)
-				batchWaitCount = 0 // Reset counter
-			}
-		}
+
 		if !ok {
 			return
 		}
 
 		res := processBatch(batch, mnemonic, config)
 
-		// Measure wait time when sending to resultChan
-		startResult := time.Now()
 		select {
-		case resultChan <- res:
-			elapsedResult := time.Since(startResult)
-			if elapsedResult > waitThreshold {
-				resultWaitCount++
-				if resultWaitCount >= logAfterCount {
-					log.Printf("runWorker: waited >%v for resultChan %d times", waitThreshold, resultWaitCount)
-					resultWaitCount = 0 // Reset counter
-				}
-			}
 		case <-stopChan:
 			return
+		case resultChan <- res:
 		}
 	}
 }

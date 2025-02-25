@@ -72,6 +72,11 @@ func generator(
 	startTime := lastPrintTime
 	var generatedThisRun int64 = 0
 
+	// For sliding window pps calculation
+	const slidingWindowDuration = 5 * time.Minute
+	slidingWindowStart := time.Now()
+	var slidingWindowCount int64 = 0
+
 	// Store the initial elapsed time from previous runs
 	initialElapsedMs := genRow.ElapsedMs
 
@@ -87,7 +92,25 @@ func generator(
 		if time.Since(lastPrintTime) >= 30*time.Second {
 			now := time.Now()
 			elapsedThisRun := now.Sub(startTime).Seconds()
-			pps := float64(generatedThisRun) / elapsedThisRun
+
+			// Calculate sliding window pps
+			slidingWindowElapsed := now.Sub(slidingWindowStart).Seconds()
+			var pps float64
+
+			// If sliding window is full, calculate based on window
+			if slidingWindowElapsed >= slidingWindowDuration.Seconds() {
+				pps = float64(slidingWindowCount) / slidingWindowDuration.Seconds()
+				// Reset sliding window
+				slidingWindowStart = now
+				slidingWindowCount = 0
+			} else if slidingWindowElapsed > 0 {
+				// Window not full yet, but we have some data
+				pps = float64(slidingWindowCount) / slidingWindowElapsed
+			} else {
+				// Fallback to overall calculation if window just started
+				pps = float64(generatedThisRun) / elapsedThisRun
+			}
+
 			overallProgress := (float64(genRow.GeneratedCount) / float64(genRow.TotalCount)) * 100.0
 			remaining := genRow.TotalCount - genRow.GeneratedCount
 			var etaSec float64
@@ -103,7 +126,7 @@ func generator(
 			runTimeDuration := time.Duration(elapsedThisRun * float64(time.Second))
 			totalRunTimeDuration := time.Duration(totalElapsedMs * int64(time.Millisecond))
 
-			logMessage := fmt.Sprintf("Progress: %.2f%%, pps: %.2f, ETA: %s, Run Time: %s, Total Run Time: %s",
+			logMessage := fmt.Sprintf("Progress: %.2f%%, PPS: %.2f, ETA: %s, Curr: %s, Total: %s",
 				overallProgress, pps,
 				formatDuration(etaDuration),
 				formatDuration(runTimeDuration),
@@ -166,6 +189,7 @@ func generator(
 		// Update generated count and elapsed time
 		genRow.GeneratedCount += n
 		generatedThisRun += n
+		slidingWindowCount += n // Update sliding window counter
 
 		// Calculate elapsed time - only for database updates
 		now := time.Now()
