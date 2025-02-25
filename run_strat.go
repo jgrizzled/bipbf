@@ -10,9 +10,9 @@ import (
 )
 
 type RuntimeArgs struct {
-	NumWorkers  int
-	BatchSize   int
-	MaxCacheLen int // Maximum number of passwords to keep in cache
+	NumWorkers   int
+	BatchSize    int
+	MaxCacheLen  int  // Maximum number of passwords to keep in cache
 	CacheEnabled bool // Whether to use the cache for deduplication
 }
 
@@ -26,13 +26,12 @@ func RunStrategy(
 	runtimeArgs RuntimeArgs,
 	strategy Strategy,
 	discordBot *DiscordBot,
+	cache *shardmap.Map,
 ) (string, error) {
 	if gen.Done == 1 {
 		log.Printf("RunStrategy: Generation %d is already done. Skipping.\n", gen.ID)
 		return "", nil
 	}
-	
-	var cache shardmap.Map
 
 	// Possibly the user found the password previously
 	foundPwd, err := getConfigFoundPassword(db, config.ID)
@@ -57,7 +56,7 @@ func RunStrategy(
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		aggregator(db, gen, resultChan, foundCh, stopChan, runtimeArgs, &cache)
+		aggregator(db, gen, resultChan, foundCh, stopChan, runtimeArgs, cache)
 	}()
 
 	// spawn workers
@@ -80,7 +79,7 @@ func RunStrategy(
 	go func() {
 		defer wg.Done()
 		defer close(batchChan)
-		generator(db, config.ID, gen, runtimeArgs, strategy, batchChan, stopChan, discordBot, &cache)
+		generator(db, config.ID, gen, runtimeArgs, strategy, batchChan, stopChan, discordBot, cache)
 	}()
 
 	// Now wait for either a found password or aggregator exit
@@ -105,4 +104,3 @@ func RunStrategy(
 	wg.Wait()
 	return found, nil
 }
-

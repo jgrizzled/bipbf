@@ -23,10 +23,10 @@ func aggregator(
 
 	// Track the next expected batch number
 	nextExpectedBatch := 0
-	
+
 	// Store out-of-order batches
 	pendingBatches := make(map[int]workerResult)
-	
+
 	for {
 		select {
 		case <-stopChan:
@@ -47,26 +47,26 @@ func aggregator(
 
 			// Add proccessed passwords to cache
 			// Check if cache size exceeds the maximum allowed length
-			if runtimeArgs.CacheEnabled {
+			if runtimeArgs.CacheEnabled && cache != nil {
 				cacheLen := cache.Len()
 				if runtimeArgs.MaxCacheLen > 0 && cacheLen > runtimeArgs.MaxCacheLen {
 					// Track how many items we need to remove
 					toRemove := cacheLen - runtimeArgs.MaxCacheLen + len(res.passwords)
 					// Collect keys to delete
 					keysToDelete := make([]string, 0, toRemove)
-					
+
 					// Use Range to collect keys to delete
 					cache.Range(func(key string, value interface{}) bool {
 						keysToDelete = append(keysToDelete, key)
 						return len(keysToDelete) < toRemove // continue until we've collected enough
 					})
-					
+
 					// Delete the collected keys
 					for _, key := range keysToDelete {
-					 cache.Delete(key)
+						cache.Delete(key)
 					}
 				}
-				
+
 				// Now add the new passwords to cache
 				for _, pw := range res.passwords {
 					cache.Set(pw, true)
@@ -75,18 +75,18 @@ func aggregator(
 
 			// Store the result
 			pendingBatches[res.batchNumber] = res
-			
+
 			// Process batches in order
 			for {
 				nextBatch, exists := pendingBatches[nextExpectedBatch]
 				if !exists {
 					break // Wait for the next expected batch
 				}
-				
+
 				// We have the next batch in sequence, process it
 				delete(pendingBatches, nextExpectedBatch)
 				nextExpectedBatch++
-				
+
 				// Update generation progress in the database
 				if nextBatch.progress != "" {
 					// Progress is already a JSON string, no need to marshal

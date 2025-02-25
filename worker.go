@@ -7,10 +7,10 @@ import (
 )
 
 type workerResult struct {
-	batchNumber        int
+	batchNumber   int
 	foundPassword *string
-	passwords          []string
-	progress           string
+	passwords     []string
+	progress      string
 }
 
 type batchItem struct {
@@ -18,7 +18,6 @@ type batchItem struct {
 	passwords   []string
 	progress    string
 }
-
 
 // worker processes each batch by deriving addresses and checking if any match.
 func worker(
@@ -81,10 +80,10 @@ func worker(
 func processBatch(batch batchItem, mnemonic string, config *Config) workerResult {
 	if len(batch.passwords) == 0 {
 		return workerResult{
-			batchNumber: batch.batchNumber,
-			passwords:   []string{},
+			batchNumber:   batch.batchNumber,
+			passwords:     []string{},
 			foundPassword: nil,
-			progress: batch.progress,
+			progress:      batch.progress,
 		}
 	}
 	var found *string
@@ -119,9 +118,9 @@ func processBatch(batch batchItem, mnemonic string, config *Config) workerResult
 	}
 
 	return workerResult{
-		batchNumber: batch.batchNumber,
-		passwords:   batch.passwords,
+		batchNumber:   batch.batchNumber,
+		passwords:     batch.passwords,
 		foundPassword: found,
-		progress: batch.progress,
+		progress:      batch.progress,
 	}
 }

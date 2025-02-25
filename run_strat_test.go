@@ -81,6 +81,7 @@ func TestExhaustiveBruteForce(t *testing.T) {
 		runtimeArgs,
 		strategy,
 		nil,
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("ExhaustiveBruteForce error: %v", err)
@@ -165,6 +166,7 @@ func BenchmarkVariationStrategy(b *testing.B) {
 		runtimeArgs,
 		strategy,
 		nil,
+		nil,
 	)
 	if err != nil {
 		b.Fatalf("Error: %v", err)
@@ -230,6 +232,7 @@ func BenchmarkWordlistStrategy(b *testing.B) {
 		mnemonic,
 		runtimeArgs,
 		strategy,
+		nil,
 		nil,
 	)
 	if err != nil {

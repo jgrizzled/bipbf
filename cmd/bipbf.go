@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/joho/godotenv"
+	"github.com/tidwall/shardmap"
 )
 
 func main() {
@@ -210,7 +211,7 @@ func main() {
 	const bytesPerGB = 1024 * 1024 * 1024
 	maxCacheEntries := int(cacheSizeGBFlag * bytesPerGB / (assumedPasswordBytes + mapOverheadBytes))
 	runtimeArgs.MaxCacheLen = maxCacheEntries
-	
+
 	// By default, cache is disabled
 	runtimeArgs.CacheEnabled = false
 
@@ -218,7 +219,7 @@ func main() {
 	if discordWebhookURLFlag != "" {
 		bot = bipbf.NewDiscordBot(discordWebhookURLFlag)
 	}
-
+	var cache shardmap.Map
 	// --- Strategy Selection and Execution ---
 	switch modeFlag {
 	case "exhaustive":
@@ -245,7 +246,7 @@ func main() {
 				log.Fatalf("Error creating exhaustive strategy: %v", err)
 			}
 			log.Printf("Running exhaustive mode with length %d", currentLen)
-			if !runStrategyForParams(db, config, 1, params, strategy, mnemonicFlag, runtimeArgs, bot, resetProgressFlag) {
+			if !runStrategyForParams(db, config, 1, params, strategy, mnemonicFlag, runtimeArgs, bot, resetProgressFlag, &cache) {
 				return // Exit if password found
 			}
 		}
@@ -280,7 +281,7 @@ func main() {
 			log.Fatalf("Error creating pwlist strategy: %v", err)
 		}
 		log.Printf("Running pwlist mode with %d passwords from %s", len(passwords), pwFileFlag)
-		if !runStrategyForParams(db, config, 2, params, strategy, mnemonicFlag, runtimeArgs, bot, resetProgressFlag) {
+		if !runStrategyForParams(db, config, 2, params, strategy, mnemonicFlag, runtimeArgs, bot, resetProgressFlag, &cache) {
 			return
 		}
 
@@ -310,7 +311,7 @@ func main() {
 		}
 
 		log.Printf("Running variation mode with %d base passwords", len(basePasswords))
-		
+
 		// Enable cache for variation mode
 		runtimeArgs.CacheEnabled = true
 
@@ -330,7 +331,7 @@ func main() {
 				displayLen = len(basePassword)
 			}
 			log.Printf("Running variation mode with base password %s***", basePassword[:displayLen])
-			if !runStrategyForParams(db, config, 3, params, strategy, mnemonicFlag, runtimeArgs, bot, resetProgressFlag) {
+			if !runStrategyForParams(db, config, 3, params, strategy, mnemonicFlag, runtimeArgs, bot, resetProgressFlag, &cache) {
 				return
 			}
 		}
@@ -367,7 +368,7 @@ func main() {
 			log.Fatalf("Error creating wordlist strategy: %v", err)
 		}
 		log.Printf("Running wordlist mode with %d words, length %d, and separator %s", len(words), lenFlag, wordlistSeparatorFlag)
-		if !runStrategyForParams(db, config, 4, params, strategy, mnemonicFlag, runtimeArgs, bot, resetProgressFlag) {
+		if !runStrategyForParams(db, config, 4, params, strategy, mnemonicFlag, runtimeArgs, bot, resetProgressFlag, &cache) {
 			return
 		}
 
@@ -384,7 +385,7 @@ func main() {
 }
 
 // runStrategyForParams executes a strategy and returns true if the password was NOT found
-func runStrategyForParams(db *sql.DB, config *bipbf.Config, genType int, params map[string]interface{}, strategy bipbf.Strategy, mnemonicFlag string, runtimeArgs bipbf.RuntimeArgs, discordBot *bipbf.DiscordBot, resetProgress bool) bool {
+func runStrategyForParams(db *sql.DB, config *bipbf.Config, genType int, params map[string]interface{}, strategy bipbf.Strategy, mnemonicFlag string, runtimeArgs bipbf.RuntimeArgs, discordBot *bipbf.DiscordBot, resetProgress bool, cache *shardmap.Map) bool {
 	// Convert params to JSON bytes
 	paramsBytes, _ := json.Marshal(params)
 
@@ -415,6 +416,7 @@ func runStrategyForParams(db *sql.DB, config *bipbf.Config, genType int, params 
 		runtimeArgs,
 		strategy,
 		discordBot,
+		cache,
 	)
 	if err != nil {
 		log.Fatalf("RunStrategy error: %v", err)

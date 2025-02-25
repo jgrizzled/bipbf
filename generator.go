@@ -71,7 +71,7 @@ func generator(
 	lastDiscordTime := lastPrintTime
 	startTime := lastPrintTime
 	var generatedThisRun int64 = 0
-	
+
 	// Store the initial elapsed time from previous runs
 	initialElapsedMs := genRow.ElapsedMs
 
@@ -94,17 +94,17 @@ func generator(
 			if pps > 0 {
 				etaSec = float64(remaining) / pps
 			}
-			
+
 			// Calculate total elapsed time (previous runs + current run)
 			totalElapsedMs := initialElapsedMs + int64(elapsedThisRun*1000)
-			
+
 			// Format durations without decimal places
 			etaDuration := time.Duration(etaSec * float64(time.Second))
 			runTimeDuration := time.Duration(elapsedThisRun * float64(time.Second))
 			totalRunTimeDuration := time.Duration(totalElapsedMs * int64(time.Millisecond))
-			
+
 			logMessage := fmt.Sprintf("Progress: %.2f%%, pps: %.2f, ETA: %s, Run Time: %s, Total Run Time: %s",
-				overallProgress, pps, 
+				overallProgress, pps,
 				formatDuration(etaDuration),
 				formatDuration(runTimeDuration),
 				formatDuration(totalRunTimeDuration))
@@ -119,7 +119,6 @@ func generator(
 			}
 		}
 		// -------------------------------------------------------------------------------------
-
 
 		// Generate the next batch of password strings
 		strs, newProgress, err := strategy.GenerateNextStrings(progress, runtimeArgs.BatchSize)
@@ -150,7 +149,7 @@ func generator(
 			// Skip empty strings and duplicates
 			if str != "" && !seen[str] {
 				// Only check cache if cache is enabled
-				if runtimeArgs.CacheEnabled {
+				if runtimeArgs.CacheEnabled && cache != nil {
 					_, exists := cache.Get(str)
 					if !exists {
 						seen[str] = true
@@ -163,25 +162,25 @@ func generator(
 				}
 			}
 		}
-		
+
 		// Update generated count and elapsed time
 		genRow.GeneratedCount += n
 		generatedThisRun += n
-		
+
 		// Calculate elapsed time - only for database updates
 		now := time.Now()
 		genRow.ElapsedMs = initialElapsedMs + int64(now.Sub(startTime).Milliseconds())
-		
+
 		// Update the database with new count and time
 		if err := updateGenerationCountAndTime(db, genRow.ID, genRow.GeneratedCount, genRow.ElapsedMs); err != nil {
 			log.Printf("Error updating generation count and time: %v", err)
 		}
 
-        // Only send batch if there are passwords to process after filtering
-        if len(uniqueStrs) > 0 {
-            batchChan <- batchItem{batchNumber: batchNumber, passwords: uniqueStrs, progress: progressStr}
-            batchNumber++
-        }
+		// Only send batch if there are passwords to process after filtering
+		if len(uniqueStrs) > 0 {
+			batchChan <- batchItem{batchNumber: batchNumber, passwords: uniqueStrs, progress: progressStr}
+			batchNumber++
+		}
 		progress = newProgress
 	}
 
@@ -200,7 +199,7 @@ func formatDuration(d time.Duration) string {
 	m := d / time.Minute
 	d -= m * time.Minute
 	s := d / time.Second
-	
+
 	// Format based on components present
 	if days > 0 {
 		return fmt.Sprintf("%dd%dh%dm%ds", days, h, m, s)
