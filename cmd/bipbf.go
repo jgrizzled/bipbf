@@ -456,7 +456,7 @@ func loadCharset(input string) string {
 			if err != nil {
 				log.Fatalf("Failed to read charset.txt: %v", err)
 			}
-			finalCharset = strings.TrimSpace(string(bytes))
+			finalCharset = string(bytes)
 		}
 	}
 

@@ -73,7 +73,7 @@ func generator(
 	var generatedThisRun int64 = 0
 
 	// For sliding window pps calculation
-	const slidingWindowDuration = 15 * time.Minute
+	const slidingWindowDuration = 30 * time.Minute
 	slidingWindowStart := time.Now()
 	var slidingWindowCount int64 = 0
 
