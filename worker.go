@@ -6,6 +6,20 @@ import (
 	"time"
 )
 
+type workerResult struct {
+	batchNumber        int
+	foundPassword *string
+	passwords          []string
+	progress           map[string]interface{}
+}
+
+type batchItem struct {
+	batchNumber int
+	passwords   []string
+	progress    map[string]interface{}
+}
+
+
 // worker processes each batch by deriving addresses and checking if any match.
 func worker(
 	mnemonic string,
@@ -43,7 +57,7 @@ func worker(
 			return
 		}
 
-		res := processBatch(batch.rows, mnemonic, config)
+		res := processBatch(batch, mnemonic, config)
 
 		// Measure wait time when sending to resultChan
 		startResult := time.Now()
@@ -64,17 +78,18 @@ func worker(
 }
 
 // processBatch runs bip39 derivation for each password in the batch.
-func processBatch(rows []passwordRow, mnemonic string, config *Config) workerResult {
-	if len(rows) == 0 {
+func processBatch(batch batchItem, mnemonic string, config *Config) workerResult {
+	if len(batch.passwords) == 0 {
 		return workerResult{
-			rowIDs:        nil,
+			batchNumber: batch.batchNumber,
+			passwords:   []string{},
 			foundPassword: nil,
+			progress: batch.progress,
 		}
 	}
 	var found *string
 
-	for _, row := range rows {
-		pw := row.Str
+	for _, pw := range batch.passwords {
 		var derivedAddresses []string
 		var err error
 		derivedAddresses, err = GetAddresses(
@@ -103,13 +118,10 @@ func processBatch(rows []passwordRow, mnemonic string, config *Config) workerRes
 		}
 	}
 
-	rowIDs := make([]int, len(rows))
-	for i, r := range rows {
-		rowIDs[i] = r.ID
-	}
-
 	return workerResult{
-		rowIDs:        rowIDs,
+		batchNumber: batch.batchNumber,
+		passwords:   batch.passwords,
 		foundPassword: found,
+		progress: batch.progress,
 	}
 }

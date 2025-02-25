@@ -6,14 +6,11 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
-	"strconv"
 	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
 )
 
-// Updated schema to rename "checked_password" to "password", adding generation_id (ON DELETE SET NULL)
-// and a checked field (default 0), edited in place (no new migration for simplicity).
 const createSchema = `
 CREATE TABLE IF NOT EXISTS app_config (
 	max_db_size_mb INTEGER NOT NULL DEFAULT 10240  -- Default to 10GB
@@ -48,17 +45,6 @@ CREATE TABLE IF NOT EXISTS generation (
 	UNIQUE(config_id, generation_type, params),
 	FOREIGN KEY(config_id) REFERENCES config(id) ON DELETE CASCADE
 );
-
-CREATE TABLE IF NOT EXISTS password (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	config_id INTEGER NOT NULL,
-	str TEXT NOT NULL,
-	checked INTEGER NOT NULL DEFAULT 0,
-	FOREIGN KEY(config_id) REFERENCES config(id) ON DELETE CASCADE,
-	UNIQUE(config_id, str)
-);
-
-CREATE INDEX IF NOT EXISTS idx_password_checked ON password(checked, id);
 `
 
 var migrations = []string{
@@ -264,140 +250,23 @@ func updateGenerationDone(db *sql.DB, generationID int) error {
 	return err
 }
 
-// updateGenerationProgress updates generation.progress with the given string.
-func updateGenerationProgress(db *sql.DB, generationID int, progress string, generatedCount int64, elapsedMs int64) error {
+// updateGenerationCountAndTime updates just the generated_count and elapsed_ms fields.
+func updateGenerationCountAndTime(db *sql.DB, generationID int, generatedCount int64, elapsedMs int64) error {
 	_, err := db.Exec(`
 		UPDATE generation
-		SET progress = ?, generated_count = ?, elapsed_ms = ?
+		SET generated_count = ?, elapsed_ms = ?
 		WHERE id = ?
-	`, progress, generatedCount, elapsedMs, generationID)
+	`, generatedCount, elapsedMs, generationID)
 	return err
 }
 
-// insertPasswords inserts the given slice of passwords into the password table
-// with checked=0, using a single multi-row INSERT statement.
-func insertPasswords(db *sql.DB, configID int, passwords []string) error {
-	if len(passwords) == 0 {
-		return nil
-	}
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin InsertPasswords tx: %w", err)
-	}
-
-	// Build the multi-row insert query.
-	// For each password, we add a placeholder "(?, ?)" and append the configID and the password as arguments.
-	placeholders := make([]string, len(passwords))
-	args := make([]interface{}, 0, len(passwords)*2)
-	for i, pw := range passwords {
-		placeholders[i] = "(?, ?)"
-		args = append(args, configID, pw)
-	}
-	query := fmt.Sprintf("INSERT OR IGNORE INTO password (config_id, str) VALUES %s", strings.Join(placeholders, ","))
-
-	if _, err := tx.Exec(query, args...); err != nil {
-		tx.Rollback()
-		return fmt.Errorf("failed to execute multi-row insert: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit InsertPasswords tx: %w", err)
-	}
-
-	return nil
-}
-
-// markPasswordsChecked sets the checked=1 for the given password IDs.
-func markPasswordsChecked(db *sql.DB, ids []int) error {
-	if len(ids) == 0 {
-		return nil
-	}
-
-	// Convert ids to strings and join with commas
-	idStrs := make([]string, len(ids))
-	for i, id := range ids {
-		idStrs[i] = strconv.Itoa(id)
-	}
-	idList := strings.Join(idStrs, ",")
-
-	query := fmt.Sprintf(`
-		UPDATE password 
-		SET checked = 1
-		WHERE id IN (%s)`, idList)
-
-	_, err := db.Exec(query)
-
-	// Prune if needed.
-	if err := pruneIfOverLimit(db); err != nil {
-		log.Printf("Warning: PruneIfOverLimit failed: %v", err)
-	}
-	return err
-}
-
-// pruneIfOverLimit checks if the db is over the configured max_db_size_mb in app_config,
-// and if so, it deletes from password in ascending id order until under limit.
-func pruneIfOverLimit(db *sql.DB) error {
-	var maxMB int64
-	err := db.QueryRow("SELECT max_db_size_mb FROM app_config LIMIT 1").Scan(&maxMB)
-	if err != nil {
-		return fmt.Errorf("failed to fetch max_db_size_mb: %w", err)
-	}
-	if maxMB <= 0 {
-		return nil
-	}
-
-	pageCount := int64(0)
-	pageSize := int64(0)
-	if err := db.QueryRow("PRAGMA page_count").Scan(&pageCount); err != nil {
-		return fmt.Errorf("failed to read page_count: %w", err)
-	}
-	if err := db.QueryRow("PRAGMA page_size").Scan(&pageSize); err != nil {
-		return fmt.Errorf("failed to read page_size: %w", err)
-	}
-	currentSizeBytes := pageCount * pageSize
-	maxBytes := maxMB * 1024 * 1024
-
-	if currentSizeBytes <= maxBytes {
-		return nil
-	}
-
-	log.Printf("DB size %d bytes exceeds max %d bytes. Pruning password...", currentSizeBytes, maxBytes)
-	deleteBatchSize := 100000
-	for i := 0; i < 1000000; i++ {
-		oldSizeBytes := currentSizeBytes
-		if err := pruneOnce(db, deleteBatchSize); err != nil {
-			return fmt.Errorf("failed to prune rows: %w", err)
-		}
-		if err := db.QueryRow("PRAGMA page_count").Scan(&pageCount); err != nil {
-			return fmt.Errorf("failed to read page_count after prune: %w", err)
-		}
-		currentSizeBytes = pageCount * pageSize
-		if currentSizeBytes == oldSizeBytes {
-			log.Printf("Pruning did not reduce DB size; stopping further pruning.")
-			break
-		}
-		if currentSizeBytes <= maxBytes {
-			break
-		}
-	}
-	_, err = db.Exec(`PRAGMA optimize`)
-	if err != nil {
-		return fmt.Errorf("failed to optimize: %w", err)
-	}
-	return nil
-}
-
-// pruneOnce deletes a batch of rows from the password table in ascending id order.
-func pruneOnce(db *sql.DB, batch int) error {
+// updateGenerationProgress updates just the progress field.
+func updateGenerationProgress(db *sql.DB, generationID int, progress string) error {
 	_, err := db.Exec(`
-		DELETE FROM password
-		WHERE id IN (
-			SELECT id FROM password
-			WHERE checked = 1
-			ORDER BY id ASC
-			LIMIT ?
-		)
-	`, batch)
+		UPDATE generation
+		SET progress = ?
+		WHERE id = ?
+	`, progress, generationID)
 	return err
 }
 
@@ -405,17 +274,6 @@ func pruneOnce(db *sql.DB, batch int) error {
 func HashMnemonic(mnemonic string) string {
 	h := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(mnemonic))))
 	return hex.EncodeToString(h[:])
-}
-
-// countUnchecked returns how many passwords for this generation have checked=0.
-func countUnchecked(db *sql.DB) (int, error) {
-	var cnt int
-	err := db.QueryRow(`
-		SELECT COUNT(*)
-		FROM password
-		WHERE checked = 0
-	`).Scan(&cnt)
-	return cnt, err
 }
 
 // getGenerationByID fetches a generation row by ID.
@@ -432,33 +290,6 @@ func getGenerationByID(db *sql.DB, generationID int) (*Generation, error) {
 		return nil, err
 	}
 	return &g, nil
-}
-
-// fetchUncheckedBatch grabs up to batchSize passwords (id, str) with checked=0,
-// starting after the given cursor ID.
-func fetchUncheckedBatch(db *sql.DB, batchSize int, cursorID int) ([]passwordRow, error) {
-	// Select rows that are not checked and have id > cursorID
-	rows, err := db.Query(`
-		SELECT id, str
-		FROM password
-		WHERE checked = 0 AND id > ?
-		ORDER BY id ASC
-		LIMIT ?
-	`, cursorID, batchSize)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []passwordRow
-	for rows.Next() {
-		var r passwordRow
-		if err := rows.Scan(&r.ID, &r.Str); err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
 }
 
 // getConfigFoundPassword is a convenience function to fetch config.found_password.
@@ -480,40 +311,6 @@ func getConfigFoundPassword(db *sql.DB, configID int) (string, error) {
 type passwordRow struct {
 	ID  int
 	Str string
-}
-
-// ClearPasswords truncates the password table, optimizes, and vacuums the database.
-func ClearPasswords(db *sql.DB) error {
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-
-	// Truncate the password table.
-	if _, err := tx.Exec("DELETE FROM password"); err != nil {
-		tx.Rollback()
-		return fmt.Errorf("failed to delete from password table: %w", err)
-	}
-
-	// Reset the autoincrement counter.
-	if _, err := tx.Exec("DELETE FROM sqlite_sequence WHERE name='password'"); err != nil {
-		tx.Rollback()
-		return fmt.Errorf("failed to reset autoincrement: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	// Run optimize and vacuum outside the transaction
-	if _, err := db.Exec("PRAGMA optimize"); err != nil {
-		return fmt.Errorf("failed to optimize: %w", err)
-	}
-	if _, err := db.Exec("VACUUM"); err != nil {
-		return fmt.Errorf("failed to vacuum: %w", err)
-	}
-
-	return nil
 }
 
 // DeleteGeneration deletes a generation record by ID.

@@ -32,9 +32,6 @@ func main() {
 	var dbPathFlag string
 	flag.StringVar(&dbPathFlag, "db-path", "db.sqlite", "Path to SQLite database file")
 
-	var dbSizeGBFlag int
-	flag.IntVar(&dbSizeGBFlag, "db-size", 0, "Max db size in GB (0 = use default)")
-
 	var modeFlag string
 	flag.StringVar(&modeFlag, "mode", "", "exhaustive, pwlist, variation, or wordlist")
 
@@ -60,6 +57,9 @@ func main() {
 
 	var batchSizeFlag int
 	flag.IntVar(&batchSizeFlag, "batch-size", 10000, "Number of passwords per batch")
+
+	var cacheSizeGBFlag float64
+	flag.Float64Var(&cacheSizeGBFlag, "cache-size", 1.0, "Maximum cache size in GB (default 1 GB)")
 
 	var charsetFlag string
 	flag.StringVar(&charsetFlag, "charset", "", "Charset to use (default loads from charset.txt if present, else alphanumeric + symbols)")
@@ -93,9 +93,6 @@ func main() {
 	// Flags for Discord webhook URL
 	var discordWebhookURLFlag string
 	flag.StringVar(&discordWebhookURLFlag, "discord-url", "", "Discord webhook URL")
-
-	var clearPwsFlag bool
-	flag.BoolVar(&clearPwsFlag, "clear-pws", false, "Clear the cached passwords and reclaim disk space")
 
 	var resetProgressFlag bool
 	flag.BoolVar(&resetProgressFlag, "reset-progress", false, "Reset progress for this run (deletes the generation record)")
@@ -178,22 +175,6 @@ func main() {
 	}
 	defer db.Close()
 
-	// Possibly override app_config.max_db_size_mb if --dbSize is given
-	if dbSizeGBFlag > 0 {
-		if err := setDBSize(db, dbSizeGBFlag*1024); err != nil {
-			log.Fatalf("failed to set DB size: %v", err)
-		}
-	}
-
-	// Handle clear-pws flag.  If set, clear passwords and exit.
-	if clearPwsFlag {
-		if err := bipbf.ClearPasswords(db); err != nil {
-			log.Fatalf("ClearPasswords failed: %v", err)
-		}
-		fmt.Println("Cached passwords cleared.")
-		return // Exit after clearing passwords
-	}
-
 	if mnemonicFlag == "" {
 		log.Fatalf("Mnemonic must be specified (via --mnemonic flag or BIPBF_MNEMONIC env variable)")
 	}
@@ -220,6 +201,18 @@ func main() {
 		NumWorkers: finalWorkers,
 		BatchSize:  batchSizeFlag,
 	}
+
+	// Calculate max cache length based on cache size in GB
+	// Assuming each password is 32 characters and each character is 1 byte
+	// Plus overhead for map storage (conservative estimate)
+	const assumedPasswordBytes = 32
+	const mapOverheadBytes = 16 // Conservative estimate for map overhead per entry
+	const bytesPerGB = 1024 * 1024 * 1024
+	maxCacheEntries := int(cacheSizeGBFlag * bytesPerGB / (assumedPasswordBytes + mapOverheadBytes))
+	runtimeArgs.MaxCacheLen = maxCacheEntries
+	
+	// By default, cache is disabled
+	runtimeArgs.CacheEnabled = false
 
 	var bot *bipbf.DiscordBot
 	if discordWebhookURLFlag != "" {
@@ -317,6 +310,10 @@ func main() {
 		}
 
 		log.Printf("Running variation mode with %d base passwords", len(basePasswords))
+		
+		// Enable cache for variation mode
+		runtimeArgs.CacheEnabled = true
+
 		// Iterate through base passwords
 		for _, basePassword := range basePasswords {
 			params := map[string]interface{}{
@@ -434,26 +431,10 @@ func runStrategyForParams(db *sql.DB, config *bipbf.Config, genType int, params 
 			}
 		}
 
-		// Clean up all cached passwords for this config ID
-		if _, err := db.Exec(`DELETE FROM password WHERE config_id = ?`, config.ID); err != nil {
-			log.Printf("Warning: Failed to delete passwords for config_id %d: %v", config.ID, err)
-		}
-
 		return false // Indicate password *was* found
 	} else {
 		return true // Indicate password not found
 	}
-}
-
-// setDBSize updates app_config.max_db_size_mb
-func setDBSize(db *sql.DB, sizeMB int) error {
-	// Enforce minimum DB size of 0.1GB (100MB)
-	if sizeMB < 100 {
-		sizeMB = 100
-		log.Printf("Warning: Using minimum DB size of 0.1GB (100MB)")
-	}
-	_, err := db.Exec(`UPDATE app_config SET max_db_size_mb = ?`, sizeMB)
-	return err
 }
 
 // loadCharset consolidates the charset fallback logic.

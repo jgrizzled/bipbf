@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"time"
+
+	"github.com/tidwall/shardmap"
 )
 
 type Strategy interface {
@@ -14,8 +16,6 @@ type Strategy interface {
 }
 
 // generator calls the generator function for a strategy.
-// It reads the generation row (including params and progress), enumerates passwords,
-// and inserts them into the password table in batches.
 // stopChan is signaled when the password is found.
 func generator(
 	db *sql.DB,
@@ -23,15 +23,18 @@ func generator(
 	genRow *Generation,
 	runtimeArgs RuntimeArgs,
 	strategy Strategy,
+	batchChan chan<- batchItem,
 	stopChan <-chan struct{},
-	writeChan chan<- WriteOp,
 	bot *DiscordBot,
+	cache *shardmap.Map,
 ) {
 
 	if genRow.Done == 1 {
 		log.Printf("RunGenerator: generation %d is already done.", genRow.ID)
 		return
 	}
+
+	batchNumber := 0
 
 	// If total_count is 0, calculate and store it
 	if genRow.TotalCount == 0 {
@@ -68,7 +71,10 @@ func generator(
 	lastDiscordTime := lastPrintTime
 	startTime := lastPrintTime
 	var generatedThisRun int64 = 0
-	iterationStart := lastPrintTime
+	
+	// Track time for elapsed time calculation
+	lastUpdateTime := time.Now()
+	elapsedMs := genRow.ElapsedMs
 
 	for {
 		// Allow the stop channel to trigger immediate exit
@@ -103,17 +109,6 @@ func generator(
 		}
 		// -------------------------------------------------------------------------------------
 
-		// Check unchecked passwords count
-		uncheckedCount, err := countUnchecked(db)
-		if err != nil {
-			log.Printf("RunGenerator: error counting unchecked: %v", err)
-			return
-		}
-		maxPending := runtimeArgs.BatchSize * runtimeArgs.NumWorkers * 2
-		if uncheckedCount >= maxPending {
-			time.Sleep(1 * time.Second)
-			continue
-		}
 
 		// Generate the next batch of password strings
 		strs, newProgress, err := strategy.GenerateNextStrings(progress, runtimeArgs.BatchSize)
@@ -124,53 +119,55 @@ func generator(
 		n := int64(len(strs))
 
 		if n == 0 {
-			// No more strings can be generated at this length
+			// No more strings can be generated
 			break
 		}
 
-		// Deduplicate strings before insertion
+		// Deduplicate strings and filter out already processed passwords
 		uniqueStrs := make([]string, 0, len(strs))
 		seen := make(map[string]bool)
+
 		for _, str := range strs {
 			// Skip empty strings and duplicates
 			if str != "" && !seen[str] {
-				seen[str] = true
-				uniqueStrs = append(uniqueStrs, str)
+				// Only check cache if cache is enabled
+				if runtimeArgs.CacheEnabled {
+					_, exists := cache.Get(str)
+					if !exists {
+						seen[str] = true
+						uniqueStrs = append(uniqueStrs, str)
+					}
+				} else {
+					// If cache is disabled, just check for duplicates in current batch
+					seen[str] = true
+					uniqueStrs = append(uniqueStrs, str)
+				}
 			}
 		}
-
-		writeOp := InsertPasswordsOp{
-			ConfigID: configID,
-			Strings:  uniqueStrs,
-		}
-		writeChan <- writeOp
-
-		progressJSON, err := json.Marshal(newProgress)
-		if err != nil {
-			log.Printf("RunGenerator: error marshaling progress: %v", err)
-			return
-		}
-
-		iterationElapsed := time.Since(iterationStart).Milliseconds()
-		genRow.ElapsedMs += iterationElapsed
-		iterationStart = time.Now()
-
+		
+		// Update generated count and elapsed time
 		genRow.GeneratedCount += n
-
-		// Replace direct DB update with write operation
-		updateOp := UpdateGenerationOp{
-			GenID:          genRow.ID,
-			Progress:       string(progressJSON),
-			GeneratedCount: genRow.GeneratedCount,
-			ElapsedMs:      genRow.ElapsedMs,
-		}
-		writeChan <- updateOp
-
 		generatedThisRun += n
-		progress = newProgress // Update progress for the next iteration
+		
+		// Calculate elapsed time
+		now := time.Now()
+		elapsedMs += int64(now.Sub(lastUpdateTime).Milliseconds())
+		lastUpdateTime = now
+		
+		// Update the database with new count and time
+		if err := updateGenerationCountAndTime(db, genRow.ID, genRow.GeneratedCount, elapsedMs); err != nil {
+			log.Printf("Error updating generation count and time: %v", err)
+		}
+
+        // Only send batch if there are passwords to process after filtering
+        if len(uniqueStrs) > 0 {
+            batchChan <- batchItem{batchNumber: batchNumber, passwords: uniqueStrs, progress: newProgress}
+            batchNumber++
+        }
+		progress = newProgress
 	}
 
-	log.Printf("Generation complete: total generated: %d passwords. Time elapsed: %v", genRow.GeneratedCount, time.Since(startTime))
+	log.Printf("Generation complete.")
 	// Mark generation done
 	updateGenerationDone(db, genRow.ID)
 }

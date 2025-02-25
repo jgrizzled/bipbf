@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"log"
 	"sync"
-	"time"
+
+	"github.com/tidwall/shardmap"
 )
 
 type RuntimeArgs struct {
-	NumWorkers int
-	BatchSize  int
+	NumWorkers  int
+	BatchSize   int
+	MaxCacheLen int // Maximum number of passwords to keep in cache
+	CacheEnabled bool // Whether to use the cache for deduplication
 }
 
 // RunStrategy is a generic generation strategy runner that spawns the aggregator, workers, reader, and the
@@ -28,6 +31,8 @@ func RunStrategy(
 		log.Printf("RunStrategy: Generation %d is already done. Skipping.\n", gen.ID)
 		return "", nil
 	}
+	
+	var cache shardmap.Map
 
 	// Possibly the user found the password previously
 	foundPwd, err := getConfigFoundPassword(db, config.ID)
@@ -47,15 +52,12 @@ func RunStrategy(
 	batchChan := make(chan batchItem, runtimeArgs.NumWorkers)     // to workers
 
 	stopChan := make(chan struct{})
-	stopReader := make(chan struct{})
-
-	writeChan := make(chan WriteOp, runtimeArgs.NumWorkers*2) // Buffer for write operations
 
 	// aggregator
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		aggregator(resultChan, foundCh, writeChan, stopChan)
+		aggregator(db, gen, resultChan, foundCh, stopChan, runtimeArgs, &cache)
 	}()
 
 	// spawn workers
@@ -73,27 +75,12 @@ func RunStrategy(
 		close(resultChan)
 	}()
 
-	// reader
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		reader(db, runtimeArgs.BatchSize, batchChan, stopReader)
-	}()
-
-	// Add writer goroutine
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		writer(db, writeChan, stopChan)
-	}()
-
 	// generator
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		defer close(stopReader)
-		generator(db, config.ID, gen, runtimeArgs, strategy, stopChan, writeChan, discordBot)
-		time.Sleep(2 * time.Second)
+		defer close(batchChan)
+		generator(db, config.ID, gen, runtimeArgs, strategy, batchChan, stopChan, discordBot, &cache)
 	}()
 
 	// Now wait for either a found password or aggregator exit
@@ -104,7 +91,6 @@ func RunStrategy(
 	}
 
 	close(stopChan)
-	close(writeChan)
 
 	// Drain channels to ensure no goroutine is blocked writing
 	go func() {
@@ -120,13 +106,3 @@ func RunStrategy(
 	return found, nil
 }
 
-// workerResult is passed back from the workers to the aggregator.
-type workerResult struct {
-	rowIDs        []int
-	foundPassword *string
-}
-
-// batchItem is passed to workers: a group of passwordRows to check.
-type batchItem struct {
-	rows []passwordRow
-}
