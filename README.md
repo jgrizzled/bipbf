@@ -6,8 +6,6 @@ BIP39 wallets are designed to be slow to brute force (performing 2048 rounds of 
 
 Alternative, more intelligent brute force modes that are based on your known commonly used passwords are more likely to complete in a reasonable amount of time. The wordlist mode can try combinations of words or segments from your commonly used passwords, and the variation mode can try variations of your commonly used passwords.
 
-Checked passwords are stored in a local SQLite database. This is to speed up runs that may generate passwords that have already been checked. You can clear the passwords and reclaim disk space by using the `--clear-pws` flag.
-
 This software is provided as-is, without any warranty or support. Users must ensure they are authorized to access the wallets they are attempting to recover.
 
 ## Requirements
@@ -102,10 +100,9 @@ BIPBF_ADDRESS_END=0
 ### Optional Flags
 
 - `--db-path`: Path to SQLite database file (default: "db.sqlite")
-- `--db-size`: Max database size in GB (default: 10gb), setting saved between runs
 - `--workers`: Number of worker threads (default: CPU cores - 1)
 - `--batch-size`: Passwords per batch (default: 10000)
-- `--clear-pws`: Clear cached passwords and reclaim disk space
+- `--cache-size`: Maximum cache size in GB (default: 1gb)
 - `--reset-progress`: Reset progress for this run
 - `--help`: Show help
 

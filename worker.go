@@ -10,13 +10,13 @@ type workerResult struct {
 	batchNumber        int
 	foundPassword *string
 	passwords          []string
-	progress           map[string]interface{}
+	progress           string
 }
 
 type batchItem struct {
 	batchNumber int
 	passwords   []string
-	progress    map[string]interface{}
+	progress    string
 }
 
 

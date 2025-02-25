@@ -2,7 +2,6 @@ package bipbf
 
 import (
 	"database/sql"
-	"encoding/json"
 	"log"
 
 	"github.com/tidwall/shardmap"
@@ -49,11 +48,10 @@ func aggregator(
 			// Add proccessed passwords to cache
 			// Check if cache size exceeds the maximum allowed length
 			if runtimeArgs.CacheEnabled {
-				if runtimeArgs.MaxCacheLen > 0 && cache.Len() > runtimeArgs.MaxCacheLen {
+				cacheLen := cache.Len()
+				if runtimeArgs.MaxCacheLen > 0 && cacheLen > runtimeArgs.MaxCacheLen {
 					// Track how many items we need to remove
-					toRemove := cache.Len() - runtimeArgs.MaxCacheLen + len(res.passwords)
-					log.Printf("Aggregator: cache %d > %d, removing %d items", cache.Len(), runtimeArgs.MaxCacheLen, toRemove)
-					
+					toRemove := cacheLen - runtimeArgs.MaxCacheLen + len(res.passwords)
 					// Collect keys to delete
 					keysToDelete := make([]string, 0, toRemove)
 					
@@ -65,7 +63,7 @@ func aggregator(
 					
 					// Delete the collected keys
 					for _, key := range keysToDelete {
-						cache.Delete(key)
+					 cache.Delete(key)
 					}
 				}
 				
@@ -90,16 +88,9 @@ func aggregator(
 				nextExpectedBatch++
 				
 				// Update generation progress in the database
-				if nextBatch.progress != nil {
-					// Convert progress to JSON string
-					progressJSON, err := json.Marshal(nextBatch.progress)
-					if err != nil {
-						log.Printf("Error marshaling progress to JSON: %v", err)
-						continue
-					}
-					
-					// Update the progress in the database
-					err = updateGenerationProgress(db, gen.ID, string(progressJSON))
+				if nextBatch.progress != "" {
+					// Progress is already a JSON string, no need to marshal
+					err := updateGenerationProgress(db, gen.ID, nextBatch.progress)
 					if err != nil {
 						log.Printf("Error updating generation progress: %v", err)
 					}

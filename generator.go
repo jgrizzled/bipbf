@@ -72,9 +72,8 @@ func generator(
 	startTime := lastPrintTime
 	var generatedThisRun int64 = 0
 	
-	// Track time for elapsed time calculation
-	lastUpdateTime := time.Now()
-	elapsedMs := genRow.ElapsedMs
+	// Store the initial elapsed time from previous runs
+	initialElapsedMs := genRow.ElapsedMs
 
 	for {
 		// Allow the stop channel to trigger immediate exit
@@ -95,8 +94,20 @@ func generator(
 			if pps > 0 {
 				etaSec = float64(remaining) / pps
 			}
-			logMessage := fmt.Sprintf("Progress: %.2f%%, pps: %.2f, ETA: %v, Run Time: %v, Total Run Time: %v",
-				overallProgress, pps, time.Duration(etaSec*float64(time.Second)), time.Duration(elapsedThisRun*float64(time.Second)), time.Duration(genRow.ElapsedMs*int64(time.Millisecond)))
+			
+			// Calculate total elapsed time (previous runs + current run)
+			totalElapsedMs := initialElapsedMs + int64(elapsedThisRun*1000)
+			
+			// Format durations without decimal places
+			etaDuration := time.Duration(etaSec * float64(time.Second))
+			runTimeDuration := time.Duration(elapsedThisRun * float64(time.Second))
+			totalRunTimeDuration := time.Duration(totalElapsedMs * int64(time.Millisecond))
+			
+			logMessage := fmt.Sprintf("Progress: %.2f%%, pps: %.2f, ETA: %s, Run Time: %s, Total Run Time: %s",
+				overallProgress, pps, 
+				formatDuration(etaDuration),
+				formatDuration(runTimeDuration),
+				formatDuration(totalRunTimeDuration))
 			log.Print(logMessage)
 			lastPrintTime = now
 
@@ -122,6 +133,14 @@ func generator(
 			// No more strings can be generated
 			break
 		}
+
+		// Marshal the progress to JSON string
+		progressJSON, err := json.Marshal(newProgress)
+		if err != nil {
+			log.Printf("Error marshaling progress to JSON: %v", err)
+			return
+		}
+		progressStr := string(progressJSON)
 
 		// Deduplicate strings and filter out already processed passwords
 		uniqueStrs := make([]string, 0, len(strs))
@@ -149,11 +168,9 @@ func generator(
 		genRow.GeneratedCount += n
 		generatedThisRun += n
 		
-		// Calculate elapsed time
+		// Calculate elapsed time - only for database updates
 		now := time.Now()
-		elapsedMs += int64(now.Sub(lastUpdateTime).Milliseconds())
-		genRow.ElapsedMs += elapsedMs
-		lastUpdateTime = now
+		genRow.ElapsedMs = initialElapsedMs + int64(now.Sub(startTime).Milliseconds())
 		
 		// Update the database with new count and time
 		if err := updateGenerationCountAndTime(db, genRow.ID, genRow.GeneratedCount, genRow.ElapsedMs); err != nil {
@@ -162,7 +179,7 @@ func generator(
 
         // Only send batch if there are passwords to process after filtering
         if len(uniqueStrs) > 0 {
-            batchChan <- batchItem{batchNumber: batchNumber, passwords: uniqueStrs, progress: newProgress}
+            batchChan <- batchItem{batchNumber: batchNumber, passwords: uniqueStrs, progress: progressStr}
             batchNumber++
         }
 		progress = newProgress
@@ -171,4 +188,27 @@ func generator(
 	log.Printf("Generation complete.")
 	// Mark generation done
 	updateGenerationDone(db, genRow.ID)
+}
+
+// formatDuration formats a duration without decimal places for seconds
+func formatDuration(d time.Duration) string {
+	// Extract days, hours, minutes, seconds
+	days := d / (24 * time.Hour)
+	d -= days * 24 * time.Hour
+	h := d / time.Hour
+	d -= h * time.Hour
+	m := d / time.Minute
+	d -= m * time.Minute
+	s := d / time.Second
+	
+	// Format based on components present
+	if days > 0 {
+		return fmt.Sprintf("%dd%dh%dm%ds", days, h, m, s)
+	} else if h > 0 {
+		return fmt.Sprintf("%dh%dm%ds", h, m, s)
+	} else if m > 0 {
+		return fmt.Sprintf("%dm%ds", m, s)
+	} else {
+		return fmt.Sprintf("%ds", s)
+	}
 }

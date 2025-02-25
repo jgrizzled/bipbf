@@ -12,10 +12,6 @@ import (
 )
 
 const createSchema = `
-CREATE TABLE IF NOT EXISTS app_config (
-	max_db_size_mb INTEGER NOT NULL DEFAULT 10240  -- Default to 10GB
-);
-
 CREATE TABLE IF NOT EXISTS config (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	mnemonic_hash TEXT NOT NULL,
@@ -99,29 +95,12 @@ func InitDB(dbPath string) (*sql.DB, error) {
 		}
 	}
 
-	if err := ensureAppConfigExists(db); err != nil {
-		return nil, err
-	}
 	_, err = db.Exec(`PRAGMA optimize`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to optimize: %w", err)
 	}
 
 	return db, nil
-}
-
-func ensureAppConfigExists(db *sql.DB) error {
-	var existing int
-	err := db.QueryRow("SELECT max_db_size_mb FROM app_config LIMIT 1").Scan(&existing)
-	if err == sql.ErrNoRows {
-		_, err := db.Exec("INSERT INTO app_config (max_db_size_mb) VALUES (10240)") // Default 10GB
-		if err != nil {
-			return fmt.Errorf("failed to insert default app_config row: %w", err)
-		}
-	} else if err != nil {
-		return fmt.Errorf("failed to read from app_config: %w", err)
-	}
-	return nil
 }
 
 // Config represents a row in the config table
@@ -305,12 +284,6 @@ func getConfigFoundPassword(db *sql.DB, configID int) (string, error) {
 		return fp.String, nil
 	}
 	return "", nil
-}
-
-// passwordRow represents a row from the password table that we need to process.
-type passwordRow struct {
-	ID  int
-	Str string
 }
 
 // DeleteGeneration deletes a generation record by ID.
